@@ -88,9 +88,9 @@ static uint32_t REG_PUMP2_CONTROL = 411102;  // Pump2啟停控制
 static uint32_t REG_PUMP1_MANUAL_MODE = 45021;   // Pump1手動模式 (0=自動, 1=手動)
 static uint32_t REG_PUMP2_MANUAL_MODE = 45022;   // Pump2手動模式
 
-static uint32_t REG_VALVE_OPENING = 411151;  // 比例閥開度設定 (%)
+static uint32_t REG_VALVE_OPENING = 411151;      // [DISABLED] 比例閥開度設定 (%)
 
-static uint32_t REG_VALVE_MANUAL_MODE = 45061;   // 比例閥手動模式
+static uint32_t REG_VALVE_MANUAL_MODE = 45061;   // [DISABLED] 比例閥手動模式
 
 // 安全限制參數
 #define MAX_FLOW_CHANGE_RATE      100.0f  // 最大流量變化率 L/min/sec
@@ -150,7 +150,7 @@ typedef struct {
 typedef struct {
     int active_pumps[2];         // 泵浦啟用狀態 [Pump1, Pump2]
     float pump_speeds[2];        // 泵浦速度 0-100%
-    float valve_opening;         // 比例閥開度 0-100%
+    float valve_opening;         // [DISABLED] 比例閥開度 0-100%
 } flow_control_output_t;
 
 // 全域變數
@@ -310,6 +310,7 @@ static int _register_list_init(void)
     _control_logic_register_list[12].default_address = REG_PUMP2_MANUAL_MODE;
     _control_logic_register_list[12].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
+    /*
     _control_logic_register_list[13].name = REG_VALVE_SETPOINT_STR;
     _control_logic_register_list[13].address_ptr = &REG_VALVE_OPENING;
     _control_logic_register_list[13].default_address = REG_VALVE_OPENING;
@@ -319,6 +320,7 @@ static int _register_list_init(void)
     _control_logic_register_list[14].address_ptr = &REG_VALVE_MANUAL_MODE;
     _control_logic_register_list[14].default_address = REG_VALVE_MANUAL_MODE;
     _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    */
 
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
@@ -428,9 +430,9 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
     // 【步驟5】檢查控制模式 (基於手動模式寄存器)
     // 任何一個設備在手動模式,整個系統就是手動模式
     int pump1_manual = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
-    int valve_manual = modbus_read_input_register(REG_VALVE_MANUAL_MODE);
+    // int valve_manual = modbus_read_input_register(REG_VALVE_MANUAL_MODE);  // [DISABLED] 比例閥不使用
 
-    control_mode = (pump1_manual > 0 || valve_manual > 0) ? FLOW_CONTROL_MODE_MANUAL : FLOW_CONTROL_MODE_AUTO;
+    control_mode = (pump1_manual > 0 /* || valve_manual > 0 */) ? FLOW_CONTROL_MODE_MANUAL : FLOW_CONTROL_MODE_AUTO;
 
     // 【步驟6】根據控制模式執行相應邏輯
     if (control_mode == FLOW_CONTROL_MODE_AUTO) {
@@ -755,8 +757,8 @@ static int execute_automatic_flow_control_mode(const flow_sensor_data_t *data) {
     // 執行控制輸出
     execute_flow_control_output(&control_output);
     
-    info(debug_tag, "自動流量控制完成 - PID輸出: %.1f%%, 泵浦速度: %.1f%%, 閥門開度: %.1f%%", 
-         pid_output, control_output.pump_speeds[0], control_output.valve_opening);
+    info(debug_tag, "自動流量控制完成 - PID輸出: %.1f%%, 泵浦速度: Pump1=%.1f%%, Pump2=%.1f%%",
+         pid_output, control_output.pump_speeds[0], control_output.pump_speeds[1]);
     
     return 0;
 }
@@ -868,14 +870,16 @@ static void execute_flow_control_output(const flow_control_output_t *output) {
             debug(debug_tag, "Pump%d 停止", i+1);
         }
     }
-    
+
+    /*
     // 設定比例閥開度
     int valve_value = (int)(output->valve_opening);
     if (valve_value > 100) valve_value = 100;
     if (valve_value < 5) valve_value = 5;  // 最小開度5%
-    
+
     modbus_write_single_register(REG_VALVE_OPENING, valve_value);
     debug(debug_tag, "比例閥設定 - 開度: %d%%", valve_value);
+    */
 }
 
 // /**
