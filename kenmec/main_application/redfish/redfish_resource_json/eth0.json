@@ -1,0 +1,44 @@
+{
+    "@odata.id": "/redfish/v1/Managers/Dexatek/EthernetInterfaces/eth0",
+    "@odata.type": "#EthernetInterface.v1_8_0.EthernetInterface",
+    "FullDuplex": true,
+    "HostName": "Dexatek",
+    "IPv4Addresses": [
+        {
+            "Address": "0.0.0.0",
+            "AddressOrigin": "Static",
+            "Gateway": "0.0.0.0",
+            "SubnetMask": "0.0.0.0"
+        }
+    ],
+    "IPv6Addresses": [
+        {
+            "Address": "::",
+            "AddressOrigin": "Static",
+            "AddressState": "Unknown",
+            "PrefixLength": 64
+        }
+    ],
+    "IPv6DefaultGateway": "::",
+    "IPv6StaticAddresses": [
+        {
+            "Address": "::",
+            "PrefixLength": 64
+        }
+    ],
+    "Id": "eth0",
+    "InterfaceEnabled": false,
+    "LinkStatus": "Unknown",
+    "MACAddress": "00:00:00:00:00:00",
+    "MTUSize": 1500,
+    "MaxIPv6StaticAddresses": 1,
+    "Name": "Manager Ethernet Interface",
+    "NameServers": [
+        "names.dmtf.org"
+    ],
+    "SpeedMbps": 0,
+    "Status": {
+        "Health": "OK",
+        "State": "Disabled"
+    }
+}

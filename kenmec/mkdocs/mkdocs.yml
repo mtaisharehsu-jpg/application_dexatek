@@ -1,0 +1,48 @@
+site_name: SDK Developer Guide
+
+theme:
+  name: material
+  palette:
+    primary: black
+    
+plugins:
+  - search
+  - mermaid2
+  - offline
+
+extra_javascript:
+  - https://unpkg.com/mermaid/dist/mermaid.min.js
+
+markdown_extensions:
+  - admonition
+
+nav:
+  - Introduction: 
+    - Hub: introduction/hub.md
+    - IO board: introduction/io_board.md
+    - RTD/PWM board: introduction/rtd_board.md
+  - Get Started:
+    - Development environment: getstarted/environment.md
+    - Development tools: getstarted/setup.md
+    - How to build SDK: getstarted/build_sdk.md
+    - How to build application: getstarted/build_kenmec.md
+    - How to build OTA image: getstarted/build_OTA_image.md
+    - How to get hub's IP address: getstarted/get_hub_ip.md
+    - How to update application: getstarted/update_application.md
+    - How to upgrade hub: getstarted/upgrade_hub.md
+  - Redfish API (TODO):
+    - Oem kenmec: redfish/oem_kenmec.md
+    - Oem kenmec config: redfish/oem_kenmec_config.md
+    - Oem kenmec I/O board: redfish/oem_kenmec_ioboards.md
+    - Oem kenmec control logic: redfish/oem_kenmec_control_logic.md
+  - Tutorials:
+    - Add new machine to control logic: tutorials/add_new_machine_to_control_logic.md
+    - Config machine type: tutorials/Redfish_Config_machine_type.md
+    - Config Modbus devices: tutorials/Redfish_Config_modbus_devices.md
+    - Config Temperature sensors: tutorials/Redfish_Config_temperature_sensors.md
+    - Config Analog input current sensors: tutorials/Redfish_Config_analog_input_current.md
+    - Config Analog input voltage sensors: tutorials/Redfish_Config_analog_input_voltage.md
+    - Config Analog output current sensors: tutorials/Redfish_Config_analog_output_current.md
+    - Config Analog output voltage sensors: tutorials/Redfish_Config_analog_output_voltage.md
+    - Control the I/O board: tutorials/Redfish_Control_IOBoards.md
+    - Control the control logic: tutorials/Redfish_Control_control_logics.md

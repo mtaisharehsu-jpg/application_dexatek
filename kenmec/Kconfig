@@ -1,0 +1,7 @@
+menu "Kenmec"
+
+config KENMEC_APPLICATION
+	bool "KENMEC_APPLICATION"
+	default y
+
+endmenu

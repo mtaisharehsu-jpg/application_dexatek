@@ -1,0 +1,7 @@
+menu "dexatek"
+
+config DEXATEK_APPLICATION
+	bool "DEXATEK_APPLICATION"
+	default y
+
+endmenu

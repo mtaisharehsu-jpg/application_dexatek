@@ -1,0 +1,10 @@
+prefix=/home/kellen/work/projects/kenmec/augentix-platform-application/application_dexatek/library/libmodbus
+exec_prefix=${prefix}
+libdir=/home/kellen/work/projects/kenmec/augentix-platform-application/buildroot/output/target/usr/lib
+includedir=/home/kellen/work/projects/kenmec/augentix-platform-application/buildroot/output/host/usr/arm-buildroot-linux-gnueabihf/sysroot/usr/include
+
+Name: modbus
+Description: Modbus library
+Version: 3.1.6
+Libs: -L${libdir} -lmodbus
+Cflags: -I${includedir}/modbus

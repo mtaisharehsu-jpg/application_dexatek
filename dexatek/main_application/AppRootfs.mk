@@ -1,0 +1,6 @@
+APP_ROOTFS_PATH := $(realpath $(CURDIR))/../rootfs
+
+APP_ROOTFS_FOLDERS :=
+APP_ROOTFS_FOLDERS += usrdata
+
+APP_ROOTFS_FILES :=

@@ -1,0 +1,19 @@
+menu "library"
+
+config LIBGPIO
+	bool "libgpio"
+	default y
+	
+config WPA_SUPPLICANT_RTW
+	bool "wpa_supplicant_rtw"
+	default y
+
+config LIBMODBUS
+	bool "Libmodbus-3.1.6"
+	default y
+
+config MDNS
+	bool "mdns"
+	default y
+
+endmenu
