@@ -317,6 +317,14 @@ int control_logic_ls80_1_temperature_control_init(void)
         error(debug_tag, "【開機初始化】啟用 control_logic_1 失敗");
     }
 
+    // 【需求B】系統開機後設定為手動模式
+    bool mode_success = modbus_write_single_register(REG_TEMP_CONTROL_MODE, 0);
+    if (mode_success) {
+        info(debug_tag, "【開機初始化】設定溫度控制模式為手動 (REG_TEMP_CONTROL_MODE = 0)");
+    } else {
+        error(debug_tag, "【開機初始化】設定手動模式失敗");
+    }
+
     return SUCCESS;
 }
 
