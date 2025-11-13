@@ -117,6 +117,9 @@ static uint16_t previous_enable_status = 0;
 // 追蹤自動啟停狀態，用於檢測邊緣觸發（0→1）
 static uint16_t previous_auto_start_stop = 0;
 
+// 追蹤比例閥手動模式狀態,用於檢測邊緣觸發(0→1 和 1→0)
+static uint16_t previous_valve_manual_mode = 0;
+
 // Modbus寄存器定義 (根據CDU系統規格)
 
 static uint32_t REG_CONTROL_LOGIC_1_ENABLE = 41001; // 控制邏輯1啟用
@@ -171,6 +174,9 @@ static void apply_dew_point_tracking(float *target_temp);
 
 // 自動啟停函式宣告
 static void handle_auto_start_stop(void);
+
+// 比例閥手動模式切換函式宣告
+static void handle_valve_manual_mode_switch(void);
 
 static uint16_t modbus_read_input_register(uint32_t address) {    
     uint16_t value = 0;
@@ -416,6 +422,12 @@ int control_logic_ls80_1_temperature_control(ControlLogic *ptr) {
 
     // 【步驟5】根據控制模式執行相應邏輯
     if (control_mode == TEMP_CONTROL_MODE_AUTO) {
+        // 在自動模式中,處理比例閥手動模式切換
+        // 當 REG_AUTO_START_STOP = 1 且 REG_TEMP_CONTROL_MODE = 1 時:
+        // - REG_VALVE_MANUAL_MODE 0→1: 允許 HMI 手動設定比例閥開度
+        // - REG_VALVE_MANUAL_MODE 1→0: 恢復 PID 自動控制
+        handle_valve_manual_mode_switch();
+
         // 自動模式: PID 控制 + 自適應參數調整 + 泵浦協調
         info(debug_tag, "執行自動溫度控制模式");
         ret = execute_automatic_control_mode(&sensor_data);
@@ -653,7 +665,7 @@ static int execute_automatic_control_mode(const sensor_data_t *data) {
     
     // 設定自動模式
     modbus_write_single_register(REG_TEMP_CONTROL_MODE, 1);
-    modbus_write_single_register(REG_VALVE_MANUAL_MODE, 0);
+    // 注意: REG_VALVE_MANUAL_MODE 由使用者控制,不在此處自動設定為 0
     
     // 讀取目標溫度
     target_temp_raw = modbus_read_input_register(REG_TARGET_TEMP);
@@ -676,14 +688,25 @@ static int execute_automatic_control_mode(const sensor_data_t *data) {
     // 計算比例閥開度
     control_output.valve_opening = calculate_valve_opening(pid_output, data);
 
-    // 設定比例閥開度
+    // 讀取比例閥手動模式狀態
+    uint16_t valve_manual_mode = modbus_read_input_register(REG_VALVE_MANUAL_MODE);
+
+    // 設定比例閥開度 (僅在非手動模式時寫入 PID 計算結果)
     int valve_value = (int)(control_output.valve_opening);
     if (valve_value > 100) valve_value = 100;
     if (valve_value < 0) valve_value = 0;
-    modbus_write_single_register(REG_VALVE_OPENING, valve_value);
 
-    info(debug_tag, "自動控制 - PID輸出: %.1f%%, 當前溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度: %d%%",
-         pid_output, data->avg_outlet_temp, target_temp, valve_value);
+    if (valve_manual_mode == 0) {
+        // 自動模式: 使用 PID 計算結果設定比例閥開度
+        modbus_write_single_register(REG_VALVE_OPENING, valve_value);
+        info(debug_tag, "自動控制 - PID輸出: %.1f%%, 當前溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度: %d%%",
+             pid_output, data->avg_outlet_temp, target_temp, valve_value);
+    } else {
+        // 手動模式: 不寫入 PID 計算結果,保持 HMI 手動設定值
+        uint16_t current_opening = modbus_read_input_register(REG_VALVE_OPENING);
+        info(debug_tag, "自動控制(比例閥手動) - PID輸出: %.1f%%, 當前溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度(手動): %d%%",
+             pid_output, data->avg_outlet_temp, target_temp, current_opening);
+    }
     
     return 0;
 }
@@ -895,6 +918,7 @@ static void apply_dew_point_tracking(float *target_temp) {
  * 【0→1 邊緣觸發】自動啟動模式
  * 1. 將 REG_CONTROL_LOGIC_1_ENABLE (41001) 設定為 1（啟用控制邏輯）
  * 2. 將 REG_TEMP_CONTROL_MODE (45009) 設定為 1（切換到自動模式）
+ * 3. 將 REG_VALVE_MANUAL_MODE (45061) 設定為 0（比例閥切換到自動模式）
  *
  * 【1→0 邊緣觸發】切換到手動模式（保持啟用）
  * 1. 不修改 REG_CONTROL_LOGIC_1_ENABLE（保持控制邏輯啟用狀態）
@@ -929,13 +953,20 @@ static void handle_auto_start_stop(void) {
             error(debug_tag, "【自動啟停】切換自動模式失敗 (MODE 寫入失敗)");
         }
 
+        // 3. 設定比例閥為自動模式 (設定 VALVE_MANUAL_MODE = 0)
+        bool valve_auto_success = modbus_write_single_register(REG_VALVE_MANUAL_MODE, 0);
+        if (!valve_auto_success) {
+            error(debug_tag, "【自動啟停】切換比例閥自動模式失敗 (VALVE_MANUAL_MODE 寫入失敗)");
+        }
+
         // 記錄執行結果
-        if (enable_success && mode_success) {
-            info(debug_tag, "【自動啟停】執行成功 - ENABLE=1, MODE=AUTO");
+        if (enable_success && mode_success && valve_auto_success) {
+            info(debug_tag, "【自動啟停】執行成功 - ENABLE=1, MODE=AUTO, VALVE_MANUAL=0");
         } else {
-            error(debug_tag, "【自動啟停】執行部分失敗 - ENABLE=%s, MODE=%s",
+            error(debug_tag, "【自動啟停】執行部分失敗 - ENABLE=%s, MODE=%s, VALVE_MANUAL=%s",
                   enable_success ? "成功" : "失敗",
-                  mode_success ? "成功" : "失敗");
+                  mode_success ? "成功" : "失敗",
+                  valve_auto_success ? "成功" : "失敗");
         }
     }
     // 【需求B】邊緣觸發檢測：從 1 變為 0 - 保持啟用但切換到手動模式
@@ -955,6 +986,51 @@ static void handle_auto_start_stop(void) {
 
     // 更新前次狀態
     previous_auto_start_stop = current_auto_start;
+}
+
+/**
+ * handle_valve_manual_mode_switch() - 處理比例閥手動模式切換
+ *
+ * 此函數監控 REG_VALVE_MANUAL_MODE (45061) 的邊緣觸發變化,
+ * 實作以下功能:
+ *
+ * 1. 【0→1】切換到手動模式:
+ *    - 記錄切換事件
+ *    - 後續在自動控制模式中,PID 計算結果將不會寫入 REG_VALVE_OPENING
+ *    - HMI 可透過 REG_VALVE_OPENING (411151) 手動設定比例閥開度
+ *
+ * 2. 【1→0】切換到自動模式:
+ *    - 記錄切換事件
+ *    - 恢復 PID 自動控制,允許寫入 REG_VALVE_OPENING
+ *
+ * 條件限制:
+ * - 只在 REG_AUTO_START_STOP = 1 且 REG_TEMP_CONTROL_MODE = 1 時生效
+ *
+ * 設計採用邊緣觸發,避免每個週期重複記錄。
+ */
+static void handle_valve_manual_mode_switch(void) {
+    // 讀取比例閥手動模式開關 (45061)
+    uint16_t current_valve_manual = modbus_read_input_register(REG_VALVE_MANUAL_MODE);
+
+    // 檢查讀取是否成功
+    if (current_valve_manual == 0xFFFF) {
+        warn(debug_tag, "REG_VALVE_MANUAL_MODE 讀取失敗,跳過手動模式檢查");
+        return;  // 讀取失敗,跳過處理
+    }
+
+    // 邊緣觸發檢測:從 0 變為 1 - 切換到手動模式
+    if (previous_valve_manual_mode == 0 && current_valve_manual == 1) {
+        info(debug_tag, "【比例閥手動模式】切換到手動控制 (0→1)");
+        info(debug_tag, "【比例閥手動模式】HMI 可透過 REG_VALVE_OPENING (411151) 手動設定開度");
+    }
+    // 邊緣觸發檢測:從 1 變為 0 - 切換到自動模式
+    else if (previous_valve_manual_mode == 1 && current_valve_manual == 0) {
+        info(debug_tag, "【比例閥手動模式】切換到自動控制 (1→0)");
+        info(debug_tag, "【比例閥手動模式】恢復 PID 自動控制比例閥開度");
+    }
+
+    // 更新前次狀態
+    previous_valve_manual_mode = current_valve_manual;
 }
 
 int control_logic_ls80_1_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
