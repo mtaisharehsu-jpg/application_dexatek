@@ -51,8 +51,7 @@
  * - 流量下限: REG_FLOW_LOW_LIMIT
  * - F1/F2 比例一致性檢查: 0.3-1.5
  *
- * 作者: [DK]
- * 日期: 2025
+ * 
  */
 
 #include "dexatek/main_application/include/application_common.h"
@@ -284,6 +283,14 @@ static void handle_auto_start_stop(void) {
 
     // 【需求2 - 最高優先級】AUTO_START_STOP=0 時，持續強制 ENABLE_2=0, ENABLE_3=0
     if (current_auto_start_stop == 0) {
+        // 檢測 AUTO_START_STOP 1→0 邊緣,保存 PUMP_MANUAL_MODE
+        if (previous_auto_start_stop == 1) {
+            saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
+            saved_pump2_manual_mode = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
+            info(debug_tag, "【AUTO_START_STOP 1→0】保存 PUMP_MANUAL_MODE - P1=%d, P2=%d",
+                 saved_pump1_manual_mode, saved_pump2_manual_mode);
+        }
+
         modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
         modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 0);
 

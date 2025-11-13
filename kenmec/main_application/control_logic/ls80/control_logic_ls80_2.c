@@ -311,6 +311,14 @@ static void handle_auto_start_stop_and_flow_mode(void) {
 
     // 【需求2 - 最高優先級】AUTO_START_STOP=0 時，持續強制 ENABLE_2=0, ENABLE_3=0
     if (current_auto_start_stop == 0) {
+        // 檢測 AUTO_START_STOP 1→0 邊緣,保存 PUMP_MANUAL_MODE
+        if (previous_auto_start_stop == 1) {
+            saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
+            saved_pump2_manual_mode = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
+            info(debug_tag, "【AUTO_START_STOP 1→0】保存 PUMP_MANUAL_MODE - P1=%d, P2=%d",
+                 saved_pump1_manual_mode, saved_pump2_manual_mode);
+        }
+
         modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
         modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 0);
 
@@ -739,7 +747,7 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
     // 讀取目標壓差設定值
     int target_raw = modbus_read_input_register(REG_PRESSURE_SETPOINT);
     if (target_raw >= 0 && target_raw != 0xFFFF) {
-        target_pressure_diff = target_raw / 10.0f;  // 0.1 bar精度
+        target_pressure_diff = target_raw / 100.0f;  // 0.01 bar精度
     } else {
         target_pressure_diff = 1.0f;  // 預設值
         warn(debug_tag, "讀取目標壓差失敗，使用預設值: %.2f bar", target_pressure_diff);
