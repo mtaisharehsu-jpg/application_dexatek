@@ -117,6 +117,8 @@ static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIS
 
 // ========== 系統控制 ==========
 static uint32_t REG_CONTROL_LOGIC_2_ENABLE = 41002; // 控制邏輯2啟用
+static uint32_t REG_CONTROL_LOGIC_3_ENABLE = 41003; // 控制邏輯3啟用
+static uint32_t REG_AUTO_START_STOP = 45020;        // 自動啟停開關
 
 // ========== 壓力感測器（使用 42xxx 映射地址）==========
 static uint32_t REG_P1_PRESSURE = 42082;  // P1一次側進水壓力（監控）
@@ -195,6 +197,10 @@ static pressure_pid_controller_t pressure_pid = {
 // 追蹤控制邏輯啟用狀態，用於偵測 1→0 轉換
 static uint16_t previous_control_logic2_enable = 1;
 
+// 追蹤 AUTO_START_STOP 和 FLOW_MODE 狀態，用於邊緣觸發檢測
+static uint16_t previous_auto_start_stop = 0;
+static uint16_t previous_flow_mode = 0;  // REG_CONTROL_MODE (45005) 即為 FLOW_MODE
+
 /*---------------------------------------------------------------------------
                         Function Declarations
  ---------------------------------------------------------------------------*/
@@ -205,6 +211,7 @@ static int execute_manual_pressure_control(float target_pressure_diff);
 static int execute_automatic_pressure_control(const pressure_sensor_data_t *data);
 static void calculate_pump_control(float pid_output, pump_control_output_t *output);
 static void execute_pump_control_output(const pump_control_output_t *output);
+static void handle_auto_start_stop_and_flow_mode(void);
 
 /*---------------------------------------------------------------------------
                             Implementation
@@ -257,6 +264,108 @@ static void switch_to_manual_mode_with_last_speed(void) {
 
     info(debug_tag, "已切換到手動模式 - Pump1=%d, Pump2=%d (手動模式=1)",
          pump1_speed, pump2_speed);
+}
+
+/*---------------------------------------------------------------------------
+            AUTO_START_STOP and FLOW_MODE Edge Trigger Handler
+ ---------------------------------------------------------------------------*/
+
+/**
+ * 處理 AUTO_START_STOP 與 FLOW_MODE 寄存器的聯動控制
+ *
+ * 【需求1A】FLOW_MODE 0→1 切換 (在 AUTO_START_STOP=1 時)
+ * - 條件: AUTO_START_STOP=1 且 FLOW_MODE 從 0→1
+ * - 動作: ENABLE_3=0, ENABLE_2=1
+ *
+ * 【需求1B】FLOW_MODE 1→0 切換 (在 AUTO_START_STOP=1 時)
+ * - 條件: AUTO_START_STOP=1 且 FLOW_MODE 從 1→0
+ * - 動作: ENABLE_3=1, ENABLE_2=0
+ *
+ * 【需求2】AUTO_START_STOP=0 時持續檢查
+ * - 條件: AUTO_START_STOP 的狀態為 0
+ * - 動作: 持續強制 ENABLE_3=0, ENABLE_2=0
+ *
+ * 【需求3A】AUTO_START_STOP 0→1 (處理 FLOW_MODE=1 情況)
+ * - 條件: AUTO_START_STOP 從 0→1 且 FLOW_MODE=1
+ * - 動作: ENABLE_2=1
+ *
+ * 【需求3B】AUTO_START_STOP 1→0
+ * - 條件: AUTO_START_STOP 從 1→0 且 ENABLE_2=1
+ * - 動作: ENABLE_2=0
+ */
+static void handle_auto_start_stop_and_flow_mode(void) {
+    // 讀取當前寄存器狀態
+    uint16_t current_auto_start_stop = modbus_read_input_register(REG_AUTO_START_STOP);
+    uint16_t current_flow_mode = modbus_read_input_register(REG_CONTROL_MODE);  // 45005 FLOW_MODE
+
+    // 檢查讀取是否成功
+    if (current_auto_start_stop == 0xFFFF || current_flow_mode == 0xFFFF) {
+        warn(debug_tag, "寄存器讀取失敗，跳過聯動控制");
+        return;
+    }
+
+    // 【需求2 - 最高優先級】AUTO_START_STOP=0 時，持續強制 ENABLE_2=0, ENABLE_3=0
+    if (current_auto_start_stop == 0) {
+        modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
+        modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 0);
+
+        // 更新狀態並返回
+        previous_auto_start_stop = current_auto_start_stop;
+        previous_flow_mode = current_flow_mode;
+        return;
+    }
+
+    // 以下邏輯只在 AUTO_START_STOP=1 時執行
+
+    // 【需求3A】AUTO_START_STOP 0→1 邊緣觸發
+    if (previous_auto_start_stop == 0 && current_auto_start_stop == 1) {
+        if (current_flow_mode == 1) {
+            // FLOW_MODE=1 (壓差模式) → 啟用 ENABLE_2
+            bool success = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 1);
+            if (success) {
+                info(debug_tag, "【需求3A】AUTO_START_STOP 0→1 且 FLOW_MODE=1 → ENABLE_2=1");
+            }
+        }
+        // 注意: FLOW_MODE=0 的情況由 ls80_3.c 處理 (舊邏輯保留)
+    }
+
+    // 【需求3B】AUTO_START_STOP 1→0 邊緣觸發
+    if (previous_auto_start_stop == 1 && current_auto_start_stop == 0) {
+        uint16_t enable_2 = modbus_read_input_register(REG_CONTROL_LOGIC_2_ENABLE);
+
+        if (enable_2 == 1) {
+            bool success = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
+            if (success) {
+                info(debug_tag, "【需求3B】AUTO_START_STOP 1→0 且 ENABLE_2=1 → ENABLE_2=0");
+            }
+        }
+    }
+
+    // 【需求1A】FLOW_MODE 0→1 邊緣觸發 (只在 AUTO_START_STOP=1 時)
+    if (previous_flow_mode == 0 && current_flow_mode == 1) {
+        // FLOW_MODE 從流量模式切換到壓差模式
+        bool success1 = modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 0);
+        bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 1);
+
+        if (success1 && success2) {
+            info(debug_tag, "【需求1A】FLOW_MODE 0→1 (AUTO_START_STOP=1) → ENABLE_3=0, ENABLE_2=1");
+        }
+    }
+
+    // 【需求1B】FLOW_MODE 1→0 邊緣觸發 (只在 AUTO_START_STOP=1 時)
+    if (previous_flow_mode == 1 && current_flow_mode == 0) {
+        // FLOW_MODE 從壓差模式切換回流量模式
+        bool success1 = modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 1);
+        bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
+
+        if (success1 && success2) {
+            info(debug_tag, "【需求1B】FLOW_MODE 1→0 (AUTO_START_STOP=1) → ENABLE_3=1, ENABLE_2=0");
+        }
+    }
+
+    // 更新前次狀態
+    previous_auto_start_stop = current_auto_start_stop;
+    previous_flow_mode = current_flow_mode;
 }
 
 /**
@@ -634,6 +743,9 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
  */
 int control_logic_ls80_2_pressure_control(ControlLogic *ptr) {
     (void)ptr;
+
+    // 【步驟0】處理 AUTO_START_STOP 與 FLOW_MODE 聯動控制
+    handle_auto_start_stop_and_flow_mode();
 
     // 【步驟1】檢查控制邏輯2是否啟用，並偵測 1→0 轉換
     uint16_t current_enable = modbus_read_input_register(REG_CONTROL_LOGIC_2_ENABLE);
