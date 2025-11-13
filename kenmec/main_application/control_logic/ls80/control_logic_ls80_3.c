@@ -71,6 +71,8 @@ static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIS
 // 系統狀態寄存器
 static uint32_t REG_CONTROL_LOGIC_3_ENABLE = 41003; // 控制邏輯3啟用
 
+static uint32_t REG_AUTO_START_STOP = 45020;        // 自動啟停開關
+
 static uint32_t REG_F1_FLOW = 42062;   // F1一次側進水流量
 static uint32_t REG_F2_FLOW = 42063;   // F2二次側出水流量 (主要控制)
 
@@ -176,6 +178,9 @@ static flow_control_config_t flow_config = {
 // 追蹤 enable 狀態，用於檢測從啟用變為停用
 static uint16_t previous_enable_status = 0;
 
+// 追蹤 AUTO_START_STOP 狀態，用於邊緣觸發檢測
+static uint16_t previous_auto_start_stop = 0;
+
 /*---------------------------------------------------------------------------
 							Function Prototypes
  ---------------------------------------------------------------------------*/
@@ -183,6 +188,7 @@ static uint16_t previous_enable_status = 0;
 static int read_flow_sensor_data(flow_sensor_data_t *data);
 static flow_safety_status_t perform_flow_safety_checks(const flow_sensor_data_t *data, float target_flow);
 static void emergency_flow_shutdown(void);
+static void handle_auto_start_stop(void);
 static float calculate_flow_tracking_target(const flow_sensor_data_t *data);
 static float calculate_flow_pid_output(flow_pid_controller_t *pid, float setpoint, float current_value);
 static void reset_flow_pid_controller(flow_pid_controller_t *pid);
@@ -239,6 +245,67 @@ static void switch_to_manual_mode_with_last_speed(void) {
 
     info(debug_tag, "已切換到手動模式 - Pump1=%d, Pump2=%d (手動模式=1)",
          pump1_speed, pump2_speed);
+}
+
+/**
+ * 處理 AUTO_START_STOP 寄存器的邊緣觸發
+ *
+ * 【需求 A】REG_AUTO_START_STOP (45020) 從 0→1 時
+ * - 條件：REG_FLOW_MODE (45005) = 0
+ * - 動作：設定 REG_CONTROL_LOGIC_3_ENABLE (41003) = 1
+ *
+ * 【需求 B】REG_AUTO_START_STOP (45020) 從 1→0 時
+ * - 條件：REG_CONTROL_LOGIC_3_ENABLE (41003) = 1
+ * - 動作：設定 REG_CONTROL_LOGIC_3_ENABLE (41003) = 0
+ */
+static void handle_auto_start_stop(void) {
+    // 讀取自動啟停開關 (45020)
+    uint16_t current_auto_start_stop = modbus_read_input_register(REG_AUTO_START_STOP);
+
+    // 檢查讀取是否成功
+    if (current_auto_start_stop == 0xFFFF) {
+        warn(debug_tag, "REG_AUTO_START_STOP 讀取失敗，跳過邊緣觸發檢查");
+        return;
+    }
+
+    // 【需求 A】邊緣觸發檢測：從 0 變為 1 時
+    if (previous_auto_start_stop == 0 && current_auto_start_stop == 1) {
+        uint16_t flow_mode = modbus_read_input_register(REG_FLOW_MODE);
+
+        if (flow_mode == 0) {
+            info(debug_tag, "【AUTO_START_STOP 0→1】啟動控制邏輯3 (FLOW_MODE=%d)", flow_mode);
+
+            bool success = modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 1);
+            if (success) {
+                info(debug_tag, "【AUTO_START_STOP 0→1】成功啟用 CONTROL_LOGIC_3_ENABLE");
+            } else {
+                error(debug_tag, "【AUTO_START_STOP 0→1】啟用 CONTROL_LOGIC_3_ENABLE 失敗");
+            }
+        } else {
+            warn(debug_tag, "【AUTO_START_STOP 0→1】FLOW_MODE=%d (非流量模式)，不啟動", flow_mode);
+        }
+    }
+
+    // 【需求 B】邊緣觸發檢測：從 1 變為 0 時
+    if (previous_auto_start_stop == 1 && current_auto_start_stop == 0) {
+        uint16_t control_logic_enable = modbus_read_input_register(REG_CONTROL_LOGIC_3_ENABLE);
+
+        if (control_logic_enable == 1) {
+            info(debug_tag, "【AUTO_START_STOP 1→0】停止控制邏輯3");
+
+            bool success = modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 0);
+            if (success) {
+                info(debug_tag, "【AUTO_START_STOP 1→0】成功停用 CONTROL_LOGIC_3_ENABLE");
+            } else {
+                error(debug_tag, "【AUTO_START_STOP 1→0】停用 CONTROL_LOGIC_3_ENABLE 失敗");
+            }
+        } else {
+            debug(debug_tag, "【AUTO_START_STOP 1→0】CONTROL_LOGIC_3_ENABLE=%d (已停用)", control_logic_enable);
+        }
+    }
+
+    // 更新前次狀態
+    previous_auto_start_stop = current_auto_start_stop;
 }
 
 static int _register_list_init(void)
@@ -372,6 +439,9 @@ int control_logic_ls80_3_flow_control_init(void)
 int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
 
     (void)ptr;
+
+    // 處理 AUTO_START_STOP 邊緣觸發
+    handle_auto_start_stop();
 
     // 【步驟0】檢測 enable 從 1 變為 0，觸發切換到手動模式
     uint16_t current_enable = modbus_read_input_register(REG_CONTROL_LOGIC_3_ENABLE);
