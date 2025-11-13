@@ -201,6 +201,10 @@ static uint16_t previous_control_logic2_enable = 1;
 static uint16_t previous_auto_start_stop = 0;
 static uint16_t previous_flow_mode = 0;  // REG_CONTROL_MODE (45005) 即為 FLOW_MODE
 
+// 追蹤 PUMP_MANUAL_MODE 狀態，用於 FLOW_MODE 切換時保持不變
+static uint16_t saved_pump1_manual_mode = 0xFFFF;  // 0xFFFF 表示未初始化
+static uint16_t saved_pump2_manual_mode = 0xFFFF;
+
 /*---------------------------------------------------------------------------
                         Function Declarations
  ---------------------------------------------------------------------------*/
@@ -212,6 +216,7 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
 static void calculate_pump_control(float pid_output, pump_control_output_t *output);
 static void execute_pump_control_output(const pump_control_output_t *output);
 static void handle_auto_start_stop_and_flow_mode(void);
+static void restore_pump_manual_mode_if_saved(void);
 
 /*---------------------------------------------------------------------------
                             Implementation
@@ -343,6 +348,12 @@ static void handle_auto_start_stop_and_flow_mode(void) {
 
     // 【需求1A】FLOW_MODE 0→1 邊緣觸發 (只在 AUTO_START_STOP=1 時)
     if (previous_flow_mode == 0 && current_flow_mode == 1) {
+        // 保存當前 PUMP_MANUAL_MODE 狀態
+        saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
+        saved_pump2_manual_mode = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
+        info(debug_tag, "【FLOW_MODE切換】保存 PUMP_MANUAL_MODE - P1=%d, P2=%d",
+             saved_pump1_manual_mode, saved_pump2_manual_mode);
+
         // FLOW_MODE 從流量模式切換到壓差模式
         bool success1 = modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 0);
         bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 1);
@@ -354,6 +365,12 @@ static void handle_auto_start_stop_and_flow_mode(void) {
 
     // 【需求1B】FLOW_MODE 1→0 邊緣觸發 (只在 AUTO_START_STOP=1 時)
     if (previous_flow_mode == 1 && current_flow_mode == 0) {
+        // 保存當前 PUMP_MANUAL_MODE 狀態
+        saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
+        saved_pump2_manual_mode = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
+        info(debug_tag, "【FLOW_MODE切換】保存 PUMP_MANUAL_MODE - P1=%d, P2=%d",
+             saved_pump1_manual_mode, saved_pump2_manual_mode);
+
         // FLOW_MODE 從壓差模式切換回流量模式
         bool success1 = modbus_write_single_register(REG_CONTROL_LOGIC_3_ENABLE, 1);
         bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
@@ -366,6 +383,32 @@ static void handle_auto_start_stop_and_flow_mode(void) {
     // 更新前次狀態
     previous_auto_start_stop = current_auto_start_stop;
     previous_flow_mode = current_flow_mode;
+}
+
+/**
+ * 恢復 PUMP_MANUAL_MODE 狀態 (如果在 FLOW_MODE 切換時有保存)
+ *
+ * 【功能說明】
+ * 當 FLOW_MODE 切換時,會保存 PUMP_MANUAL_MODE 的原始狀態。
+ * 在控制邏輯執行完畢後,調用此函數恢復原始狀態,確保:
+ * - PUMP1_MANUAL_MODE_REG 和 PUMP2_MANUAL_MODE_REG 保持 FLOW_MODE 切換前的值
+ * - 不受 switch_to_manual_mode_with_last_speed() 或 execute_automatic_xxx_control() 影響
+ *
+ * 【使用時機】
+ * 在 control_logic_ls80_2_pressure_control() 主函數的最後調用
+ */
+static void restore_pump_manual_mode_if_saved(void) {
+    if (saved_pump1_manual_mode != 0xFFFF) {
+        modbus_write_single_register(REG_PUMP1_MANUAL_MODE, saved_pump1_manual_mode);
+        modbus_write_single_register(REG_PUMP2_MANUAL_MODE, saved_pump2_manual_mode);
+
+        info(debug_tag, "【FLOW_MODE切換】恢復 PUMP_MANUAL_MODE - P1=%d, P2=%d",
+             saved_pump1_manual_mode, saved_pump2_manual_mode);
+
+        // 清除保存的值
+        saved_pump1_manual_mode = 0xFFFF;
+        saved_pump2_manual_mode = 0xFFFF;
+    }
 }
 
 /**
@@ -805,6 +848,9 @@ int control_logic_ls80_2_pressure_control(ControlLogic *ptr) {
     if (ret != 0) {
         error(debug_tag, "壓差控制邏輯執行失敗: %d", ret);
     }
+
+    // 恢復 PUMP_MANUAL_MODE 狀態 (如果在 FLOW_MODE 切換時有保存)
+    restore_pump_manual_mode_if_saved();
 
     debug(debug_tag, "=== CDU壓力差控制循環完成 ===");
     return ret;
