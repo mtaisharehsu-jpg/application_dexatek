@@ -91,6 +91,7 @@ static time_t pump2_last_update_time = 0;
 static uint16_t pump1_last_speed = 0;
 static uint16_t pump2_last_speed = 0;
 static bool system_initialized = false;
+static uint16_t previous_auto_start_stop = 0;  // 用於追蹤 AUTO_START_STOP 的前次狀態
 
 // 泵浦啟動狀態追蹤
 static bool pumps_auto_started = false;
@@ -322,15 +323,19 @@ int control_logic_ls80_7_2dc_pump_control_init(void)
 /**
  * 手動模式速度更新函數 - Pump1
  *
- * 當 PUMP1_MANUAL_MODE_REG = 1 且 REG_PUMP1_SPEED 被從 HMI 設定時，
- * 每 1.5 秒送一次 PUMP1 手動設定值給 REG_PUMP1_SPEED
+ * 【執行條件】
+ * - 當 AUTO_START_STOP (45020) = 0 時執行
+ *
+ * 【功能】
+ * - 每 1.0 秒更新一次速度設定值
+ * - 允許從 HMI 手動設定 Pump1 速度 (REG 45015)
  */
 static void update_pump1_manual_speed(void)
 {
-    // 檢查是否處於手動模式
-    uint16_t manual_mode = modbus_read_input_register(PUMP1_MANUAL_MODE_REG);
-    if (manual_mode != 1) {
-        return; // 非手動模式，不執行
+    // 檢查條件：只要 AUTO_START_STOP = 0 就允許手動速度更新
+    uint16_t auto_start_stop = modbus_read_input_register(AUTO_START_STOP);
+    if (auto_start_stop != 0) {
+        return; // AUTO_START_STOP != 0，不執行手動速度更新
     }
 
     // 讀取當前速度設定值
@@ -359,15 +364,19 @@ static void update_pump1_manual_speed(void)
 /**
  * 手動模式速度更新函數 - Pump2
  *
- * 當 PUMP2_MANUAL_MODE_REG = 1 且 REG_PUMP2_SPEED 被從 HMI 設定時，
- * 每 1.5 秒送一次 PUMP2 手動設定值給 REG_PUMP2_SPEED
+ * 【執行條件】
+ * - 當 AUTO_START_STOP (45020) = 0 時執行
+ *
+ * 【功能】
+ * - 每 1.0 秒更新一次速度設定值
+ * - 允許從 HMI 手動設定 Pump2 速度 (REG 45016)
  */
 static void update_pump2_manual_speed(void)
 {
-    // 檢查是否處於手動模式
-    uint16_t manual_mode = modbus_read_input_register(PUMP2_MANUAL_MODE_REG);
-    if (manual_mode != 1) {
-        return; // 非手動模式，不執行
+    // 檢查條件：只要 AUTO_START_STOP = 0 就允許手動速度更新
+    uint16_t auto_start_stop = modbus_read_input_register(AUTO_START_STOP);
+    if (auto_start_stop != 0) {
+        return; // AUTO_START_STOP != 0，不執行手動速度更新
     }
 
     // 讀取當前速度設定值
@@ -521,6 +530,65 @@ static void auto_start_pumps_delayed(void)
 }
 
 /*---------------------------------------------------------------------------
+                    AUTO_START_STOP Edge Trigger Handler
+ ---------------------------------------------------------------------------*/
+
+/**
+ * 處理 AUTO_START_STOP 寄存器的邊緣觸發
+ *
+ * 當 AUTO_START_STOP (45020) 從 1 變為 0 時，自動將兩個泵浦速度降到 0
+ *
+ * 【功能說明】
+ * - 檢測 AUTO_START_STOP 的 1→0 邊緣觸發
+ * - 自動設定 DC_PUMP1_SPEED_CMD_REG (45015) = 0
+ * - 自動設定 DC_PUMP2_SPEED_CMD_REG (45016) = 0
+ * - 不修改 PUMP1_MANUAL_MODE_REG 和 PUMP2_MANUAL_MODE_REG 的原值
+ *
+ * 【使用範例】
+ * 當使用者將 AUTO_START_STOP 從 1 切換到 0 時，系統會自動將兩個泵浦
+ * 速度降到 0，並允許後續從 HMI 手動設定速度（只要 AUTO_START_STOP = 0）。
+ */
+static void handle_auto_start_stop(void) {
+    // 讀取自動啟停開關 (45020)
+    uint16_t current_auto_start = modbus_read_input_register(AUTO_START_STOP);
+
+    // 檢查讀取是否成功
+    if (current_auto_start == 0xFFFF) {
+        warn(debug_tag, "AUTO_START_STOP 讀取失敗，跳過邊緣觸發檢查");
+        return;  // 讀取失敗，跳過處理
+    }
+
+    // 邊緣觸發檢測：從 1 變為 0 時，將泵浦速度降到 0
+    if (previous_auto_start_stop == 1 && current_auto_start == 0) {
+        info(debug_tag, "【自動啟停】關閉 (1→0) - 將兩個泵浦速度降到 0");
+
+        // 設定 Pump1 速度為 0
+        bool pump1_success = modbus_write_single_register(DC_PUMP1_SPEED_CMD_REG, 0);
+        if (!pump1_success) {
+            error(debug_tag, "【自動啟停】設定 Pump1 速度為 0 失敗");
+        }
+
+        // 設定 Pump2 速度為 0
+        bool pump2_success = modbus_write_single_register(DC_PUMP2_SPEED_CMD_REG, 0);
+        if (!pump2_success) {
+            error(debug_tag, "【自動啟停】設定 Pump2 速度為 0 失敗");
+        }
+
+        // 記錄執行結果
+        if (pump1_success && pump2_success) {
+            info(debug_tag, "【自動啟停】成功將泵浦速度降到 0 - Pump1=0%%, Pump2=0%%");
+        } else {
+            error(debug_tag, "【自動啟停】降速部分失敗 - Pump1=%s, Pump2=%s",
+                  pump1_success ? "成功" : "失敗",
+                  pump2_success ? "成功" : "失敗");
+        }
+    }
+
+    // 更新前次狀態
+    previous_auto_start_stop = current_auto_start;
+}
+
+/*---------------------------------------------------------------------------
                             Main Control Function
  ---------------------------------------------------------------------------*/
 
@@ -532,8 +600,10 @@ static void auto_start_pumps_delayed(void)
  *
  * 【執行流程】
  * 1. 檢查控制邏輯是否啟用 (REG_CONTROL_LOGIC_7_ENABLE)
- * 2. 檢查並更新 Pump1 手動模式速度 (每 1.5 秒)
- * 3. 檢查並更新 Pump2 手動模式速度 (每 1.5 秒)
+ * 2. 延遲自動啟動泵浦（系統啟動後5秒）
+ * 3. 處理 AUTO_START_STOP 邊緣觸發（1→0 時自動切換到手動模式）
+ * 4. 檢查並更新 Pump1 手動模式速度 (每 1.0 秒)
+ * 5. 檢查並更新 Pump2 手動模式速度 (每 1.0 秒)
  *
  * @param ptr 控制邏輯結構指標 (本函數未使用)
  * @return 0=成功
@@ -550,6 +620,9 @@ int control_logic_ls80_7_2dc_pump_control(ControlLogic *ptr) {
 
     // 延遲自動啟動泵浦（系統啟動後首次執行）
     auto_start_pumps_delayed();
+
+    // 處理 AUTO_START_STOP 邊緣觸發（1→0 時切換到手動模式）
+    handle_auto_start_stop();
 
     // 更新 Pump1 手動模式速度
     update_pump1_manual_speed();
