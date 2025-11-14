@@ -264,8 +264,8 @@ static void switch_to_manual_mode_with_last_speed(void) {
     modbus_write_single_register(REG_PUMP2_SPEED, pump2_speed);
 
     // 3. 設定為手動模式
-    modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 1);
-    modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 1);
+    //modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 1);
+    //modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 1);
 
     info(debug_tag, "已切換到手動模式 - Pump1=%d, Pump2=%d (手動模式=1)",
          pump1_speed, pump2_speed);
@@ -741,8 +741,8 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
     info(debug_tag, "自動壓差控制模式執行 ((P4-P2)→Pset追蹤)");
 
     // 設定自動模式
-    modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 0);
-    modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 0);
+    //modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 0);
+    //modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 0);
 
     // 讀取目標壓差設定值
     int target_raw = modbus_read_input_register(REG_PRESSURE_SETPOINT);

@@ -248,8 +248,8 @@ static void switch_to_manual_mode_with_last_speed(void) {
     modbus_write_single_register(REG_PUMP2_SPEED, pump2_speed);
 
     // 3. 設定為手動模式
-    modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 1);
-    modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 1);
+   // modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 1);
+   // modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 1);
 
     info(debug_tag, "已切換到手動模式 - Pump1=%d, Pump2=%d (手動模式=1)",
          pump1_speed, pump2_speed);
@@ -885,8 +885,8 @@ static int execute_automatic_flow_control_mode(const flow_sensor_data_t *data) {
     
     // 設定自動模式
     modbus_write_single_register(REG_FLOW_MODE, 0);         // 0=流量模式
-    modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 0); // 自動模式
-    modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 0);
+    //modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 0); // 自動模式
+    //modbus_write_single_register(REG_PUMP2_MANUAL_MODE, 0);
     // modbus_write_single_register(REG_PUMP3_MANUAL_MODE, 0);
     // modbus_write_single_register(REG_VALVE_MANUAL_MODE, 0);
     
