@@ -76,6 +76,22 @@ static uint32_t TARGET_PRESSURE_REG = 45004;    // 目標壓力設定
 static uint32_t FLOW_FEEDBACK_REG = 42063;    // 流量回饋
 static uint32_t PRESSURE_FEEDBACK_REG = 42093;    // 壓力回饋
 
+// ==================== Pump Runtime Registers ====================
+// 泵浦運轉時間記錄寄存器 (斷電保持)
+static uint32_t PUMP1_RUNTIME_SEC_REG = 42161;   // Pump1 運轉時間 - 秒 (0-59)
+static uint32_t PUMP1_RUNTIME_MIN_REG = 42162;   // Pump1 運轉時間 - 分 (0-59)
+static uint32_t PUMP1_RUNTIME_HOUR_REG = 42163;  // Pump1 運轉時間 - 時 (0-23)
+static uint32_t PUMP1_RUNTIME_DAY_REG = 42164;   // Pump1 運轉時間 - 天 (累積)
+
+static uint32_t PUMP2_RUNTIME_SEC_REG = 42165;   // Pump2 運轉時間 - 秒 (0-59)
+static uint32_t PUMP2_RUNTIME_MIN_REG = 42166;   // Pump2 運轉時間 - 分 (0-59)
+static uint32_t PUMP2_RUNTIME_HOUR_REG = 42167;  // Pump2 運轉時間 - 時 (0-23)
+static uint32_t PUMP2_RUNTIME_DAY_REG = 42168;   // Pump2 運轉時間 - 天 (累積)
+
+// 運轉時間歸零控制寄存器
+static uint32_t PUMP1_RUNTIME_RESET_REG = 45037; // Pump1 運轉時間歸零
+static uint32_t PUMP2_RUNTIME_RESET_REG = 45038; // Pump2 運轉時間歸零
+
 /*---------------------------------------------------------------------------
                             Static Variables
  ---------------------------------------------------------------------------*/
@@ -102,6 +118,20 @@ static int pump2_retry_count = 0;
 static time_t system_start_time = 0;
 
 #define MAX_PUMP_START_RETRY 3  // 最大重試次數
+
+/*---------------------------------------------------------------------------
+                        Pump Runtime Tracking Variables
+ ---------------------------------------------------------------------------*/
+
+// 泵浦運轉時間追蹤結構
+typedef struct {
+    time_t last_update_time;    // 上次更新時間戳
+    bool last_running_state;    // 上次運轉狀態
+    bool initialized;           // 是否已初始化
+} pump_runtime_tracker_t;
+
+static pump_runtime_tracker_t pump1_runtime_tracker = {0, false, false};
+static pump_runtime_tracker_t pump2_runtime_tracker = {0, false, false};
 
 /*---------------------------------------------------------------------------
                             Modbus Helper Functions
@@ -589,6 +619,168 @@ static void handle_auto_start_stop(void) {
 }
 
 /*---------------------------------------------------------------------------
+                       Pump Runtime Management Functions
+ ---------------------------------------------------------------------------*/
+
+/**
+ * 累積泵浦運轉時間 (處理秒→分→時→天的進位)
+ *
+ * @param sec_reg   秒寄存器地址
+ * @param min_reg   分寄存器地址
+ * @param hour_reg  時寄存器地址
+ * @param day_reg   天寄存器地址
+ * @param elapsed   已運轉的秒數
+ */
+static void accumulate_pump_runtime(uint32_t sec_reg, uint32_t min_reg,
+                                   uint32_t hour_reg, uint32_t day_reg,
+                                   time_t elapsed) {
+    if (elapsed <= 0) return;
+
+    // 讀取當前運轉時間
+    uint16_t sec = modbus_read_input_register(sec_reg);
+    uint16_t min = modbus_read_input_register(min_reg);
+    uint16_t hour = modbus_read_input_register(hour_reg);
+    uint16_t day = modbus_read_input_register(day_reg);
+
+    debug(debug_tag, "累積前 - 秒:%d 分:%d 時:%d 天:%d (累積 %ld 秒)",
+          sec, min, hour, day, (long)elapsed);
+
+    // 累積秒數
+    sec += elapsed;
+
+    // 秒進位到分 (60秒 = 1分)
+    if (sec >= 60) {
+        min += sec / 60;
+        sec = sec % 60;
+    }
+
+    // 分進位到時 (60分 = 1時)
+    if (min >= 60) {
+        hour += min / 60;
+        min = min % 60;
+    }
+
+    // 時進位到天 (24時 = 1天)
+    if (hour >= 24) {
+        day += hour / 24;
+        hour = hour % 24;
+    }
+
+    // 寫回寄存器
+    modbus_write_single_register(sec_reg, sec);
+    modbus_write_single_register(min_reg, min);
+    modbus_write_single_register(hour_reg, hour);
+    modbus_write_single_register(day_reg, day);
+
+    debug(debug_tag, "累積後 - 秒:%d 分:%d 時:%d 天:%d", sec, min, hour, day);
+}
+
+/**
+ * 檢查並處理運轉時間歸零指令
+ *
+ * @param reset_reg 歸零控制寄存器地址
+ * @param sec_reg   秒寄存器地址
+ * @param min_reg   分寄存器地址
+ * @param hour_reg  時寄存器地址
+ * @param day_reg   天寄存器地址
+ * @param pump_name 泵浦名稱 (用於 debug 訊息)
+ */
+static void check_and_reset_pump_runtime(uint32_t reset_reg, uint32_t sec_reg,
+                                        uint32_t min_reg, uint32_t hour_reg,
+                                        uint32_t day_reg, const char *pump_name) {
+    uint16_t reset_cmd = modbus_read_input_register(reset_reg);
+
+    if (reset_cmd == 1) {
+        // 執行歸零
+        modbus_write_single_register(sec_reg, 0);
+        modbus_write_single_register(min_reg, 0);
+        modbus_write_single_register(hour_reg, 0);
+        modbus_write_single_register(day_reg, 0);
+
+        info(debug_tag, "【%s 運轉時間歸零】執行完成", pump_name);
+    }
+}
+
+/**
+ * 更新單個泵浦的運轉時間
+ *
+ * @param tracker      運轉時間追蹤器
+ * @param enable_reg   泵浦啟用寄存器地址
+ * @param sec_reg      秒寄存器地址
+ * @param min_reg      分寄存器地址
+ * @param hour_reg     時寄存器地址
+ * @param day_reg      天寄存器地址
+ * @param pump_name    泵浦名稱 (用於 debug 訊息)
+ */
+static void update_pump_runtime(pump_runtime_tracker_t *tracker,
+                               uint32_t enable_reg, uint32_t sec_reg,
+                               uint32_t min_reg, uint32_t hour_reg,
+                               uint32_t day_reg, const char *pump_name) {
+    // 讀取泵浦啟用狀態
+    uint16_t is_running = modbus_read_input_register(enable_reg);
+    time_t current_time = time(NULL);
+
+    // 初始化追蹤器
+    if (!tracker->initialized) {
+        tracker->last_update_time = current_time;
+        tracker->last_running_state = (is_running == 1);
+        tracker->initialized = true;
+        debug(debug_tag, "【%s 運轉時間追蹤】初始化完成", pump_name);
+        return;
+    }
+
+    // 如果泵浦正在運轉，累積運轉時間
+    if (is_running == 1 && tracker->last_running_state) {
+        // 計算經過的時間 (秒)
+        time_t elapsed = difftime(current_time, tracker->last_update_time);
+
+        if (elapsed >= 1) {  // 至少累積 1 秒
+            accumulate_pump_runtime(sec_reg, min_reg, hour_reg, day_reg, elapsed);
+            tracker->last_update_time = current_time;
+            debug(debug_tag, "【%s 運轉時間】累積 %ld 秒", pump_name, (long)elapsed);
+        }
+    } else {
+        // 泵浦停止或狀態改變，更新時間戳
+        tracker->last_update_time = current_time;
+    }
+
+    // 更新運轉狀態
+    tracker->last_running_state = (is_running == 1);
+}
+
+/**
+ * 管理所有泵浦的運轉時間追蹤
+ *
+ * 【功能說明】
+ * 1. 檢查並處理運轉時間歸零指令
+ * 2. 更新 Pump1 和 Pump2 的運轉時間累積
+ * 3. 每秒累積運轉時間，自動進位 (秒→分→時→天)
+ */
+static void manage_all_pumps_runtime(void) {
+    // 檢查並處理歸零指令
+    check_and_reset_pump_runtime(PUMP1_RUNTIME_RESET_REG,
+                                 PUMP1_RUNTIME_SEC_REG, PUMP1_RUNTIME_MIN_REG,
+                                 PUMP1_RUNTIME_HOUR_REG, PUMP1_RUNTIME_DAY_REG,
+                                 "Pump1");
+
+    check_and_reset_pump_runtime(PUMP2_RUNTIME_RESET_REG,
+                                 PUMP2_RUNTIME_SEC_REG, PUMP2_RUNTIME_MIN_REG,
+                                 PUMP2_RUNTIME_HOUR_REG, PUMP2_RUNTIME_DAY_REG,
+                                 "Pump2");
+
+    // 更新運轉時間
+    update_pump_runtime(&pump1_runtime_tracker, DC_PUMP1_ENABLE_CMD_REG,
+                       PUMP1_RUNTIME_SEC_REG, PUMP1_RUNTIME_MIN_REG,
+                       PUMP1_RUNTIME_HOUR_REG, PUMP1_RUNTIME_DAY_REG,
+                       "Pump1");
+
+    update_pump_runtime(&pump2_runtime_tracker, DC_PUMP2_ENABLE_CMD_REG,
+                       PUMP2_RUNTIME_SEC_REG, PUMP2_RUNTIME_MIN_REG,
+                       PUMP2_RUNTIME_HOUR_REG, PUMP2_RUNTIME_DAY_REG,
+                       "Pump2");
+}
+
+/*---------------------------------------------------------------------------
                             Main Control Function
  ---------------------------------------------------------------------------*/
 
@@ -629,6 +821,9 @@ int control_logic_ls80_7_2dc_pump_control(ControlLogic *ptr) {
 
     // 更新 Pump2 手動模式速度
     update_pump2_manual_speed();
+
+    // 管理泵浦運轉時間追蹤
+    manage_all_pumps_runtime();
 
     debug(debug_tag, "=== 2台DC泵手動控制完成 ===");
 
