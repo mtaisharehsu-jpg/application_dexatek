@@ -705,7 +705,7 @@ static void check_and_reset_pump_runtime(uint32_t reset_reg, uint32_t sec_reg,
  * 更新單個泵浦的運轉時間
  *
  * @param tracker      運轉時間追蹤器
- * @param enable_reg   泵浦啟用寄存器地址
+ * @param speed_cmd_reg 泵浦轉速命令寄存器地址
  * @param sec_reg      秒寄存器地址
  * @param min_reg      分寄存器地址
  * @param hour_reg     時寄存器地址
@@ -713,11 +713,12 @@ static void check_and_reset_pump_runtime(uint32_t reset_reg, uint32_t sec_reg,
  * @param pump_name    泵浦名稱 (用於 debug 訊息)
  */
 static void update_pump_runtime(pump_runtime_tracker_t *tracker,
-                               uint32_t enable_reg, uint32_t sec_reg,
+                               uint32_t speed_cmd_reg, uint32_t sec_reg,
                                uint32_t min_reg, uint32_t hour_reg,
                                uint32_t day_reg, const char *pump_name) {
-    // 讀取泵浦啟用狀態
-    uint16_t is_running = modbus_read_input_register(enable_reg);
+    // 讀取泵浦轉速命令 (> 0 表示運轉中)
+    uint16_t speed_cmd = modbus_read_input_register(speed_cmd_reg);
+    uint16_t is_running = (speed_cmd > 0) ? 1 : 0;
     time_t current_time = time(NULL);
 
     // 初始化追蹤器
@@ -768,13 +769,13 @@ static void manage_all_pumps_runtime(void) {
                                  PUMP2_RUNTIME_HOUR_REG, PUMP2_RUNTIME_DAY_REG,
                                  "Pump2");
 
-    // 更新運轉時間
-    update_pump_runtime(&pump1_runtime_tracker, DC_PUMP1_ENABLE_CMD_REG,
+    // 更新運轉時間 (根據轉速命令判斷運轉狀態)
+    update_pump_runtime(&pump1_runtime_tracker, DC_PUMP1_SPEED_CMD_REG,
                        PUMP1_RUNTIME_SEC_REG, PUMP1_RUNTIME_MIN_REG,
                        PUMP1_RUNTIME_HOUR_REG, PUMP1_RUNTIME_DAY_REG,
                        "Pump1");
 
-    update_pump_runtime(&pump2_runtime_tracker, DC_PUMP2_ENABLE_CMD_REG,
+    update_pump_runtime(&pump2_runtime_tracker, DC_PUMP2_SPEED_CMD_REG,
                        PUMP2_RUNTIME_SEC_REG, PUMP2_RUNTIME_MIN_REG,
                        PUMP2_RUNTIME_HOUR_REG, PUMP2_RUNTIME_DAY_REG,
                        "Pump2");
