@@ -348,13 +348,39 @@ int control_logic_ls80_1_temperature_control_init(void)
     }
 
     // 【需求C】設定溫度限制預設值 (HMI 可修改，斷電保持)
-    // 注意: 這些值只在首次初始化時設定,之後由 HMI 寫入的值會自動保持
-    bool t_high_success = modbus_write_single_register(REG_T_HIGH_ALARM, 50);  // 50.0°C
-    bool t_low_success = modbus_write_single_register(REG_T_LOW_ALARM, 10);    // 10.0°C
-    if (t_high_success && t_low_success) {
-        info(debug_tag, "【開機初始化】設定溫度限制預設值 - 最高:50.0°C, 最低:10.0°C");
+    // 策略: 先讀取當前值，只在值為 0 或讀取失敗時才設置預設值
+    //       如果已有有效值則保留(用戶透過 HMI 設定的值)
+
+    // 讀取最高溫度限制
+    uint16_t current_high = modbus_read_input_register(REG_T_HIGH_ALARM);
+    if (current_high == 0 || current_high == 0xFFFF) {
+        // 寄存器為空或讀取失敗，設置預設值
+        bool t_high_success = modbus_write_single_register(REG_T_HIGH_ALARM, 50);  // 50.0°C
+        if (t_high_success) {
+            info(debug_tag, "【開機初始化】設定最高溫度限制預設值: 50.0°C");
+        } else {
+            error(debug_tag, "【開機初始化】設定最高溫度限制失敗");
+        }
     } else {
-        error(debug_tag, "【開機初始化】設定溫度限制預設值失敗");
+        // 寄存器已有有效值，保留現有設定 (HMI 寫入的值)
+        float temp_c = current_high / 10.0f;
+        info(debug_tag, "【開機初始化】最高溫度限制已設置: %.1f°C (保留現有值)", temp_c);
+    }
+
+    // 讀取最低溫度限制
+    uint16_t current_low = modbus_read_input_register(REG_T_LOW_ALARM);
+    if (current_low == 0 || current_low == 0xFFFF) {
+        // 寄存器為空或讀取失敗，設置預設值
+        bool t_low_success = modbus_write_single_register(REG_T_LOW_ALARM, 10);    // 10.0°C
+        if (t_low_success) {
+            info(debug_tag, "【開機初始化】設定最低溫度限制預設值: 10.0°C");
+        } else {
+            error(debug_tag, "【開機初始化】設定最低溫度限制失敗");
+        }
+    } else {
+        // 寄存器已有有效值，保留現有設定 (HMI 寫入的值)
+        float temp_c = current_low / 10.0f;
+        info(debug_tag, "【開機初始化】最低溫度限制已設置: %.1f°C (保留現有值)", temp_c);
     }
 
     return SUCCESS;
