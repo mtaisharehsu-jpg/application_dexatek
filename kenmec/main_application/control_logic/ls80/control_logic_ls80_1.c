@@ -59,7 +59,7 @@
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_1.json"
-#define CONFIG_REGISTER_LIST_SIZE 17
+#define CONFIG_REGISTER_LIST_SIZE 19  // 增加 2 個溫度限制寄存器 (46001, 46002)
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 static const char *debug_tag = "ls80_1_temp";
@@ -149,9 +149,14 @@ static uint32_t REG_VALVE_MANUAL_MODE = 45061; // 比例閥手動模式
 
 static uint32_t REG_VALVE_OPENING = 411151; // 比例閥開度設定 (%)
 
+// 溫度限制暫存器 (HMI 可設定，斷電保持)
+static uint32_t REG_T_HIGH_ALARM = 46001;  // 最高溫度限制 (預設 50.0°C)
+static uint32_t REG_T_LOW_ALARM = 46002;   // 最低溫度限制 (預設 10.0°C)
+
 // 安全限制參數
-#define MAX_TEMP_LIMIT         40.0f   // 最高溫度限制
-#define MIN_TEMP_LIMIT         15.0f    // 最低溫度限制
+// 註: MAX_TEMP_LIMIT 和 MIN_TEMP_LIMIT 已改為從寄存器 46001/46002 讀取
+// #define MAX_TEMP_LIMIT         40.0f   // 最高溫度限制 (已廢棄，改用 REG_T_HIGH_ALARM)
+// #define MIN_TEMP_LIMIT         15.0f   // 最低溫度限制 (已廢棄，改用 REG_T_LOW_ALARM)
 #define MIN_FLOW_RATE          0.0f  // 最小流量 L/min
 #define TEMP_TOLERANCE         0.5f    // 溫度容差 ±0.5°C
 #define TARGET_TEMP_DEFAULT    25.0f   // 預設目標溫度
@@ -301,6 +306,17 @@ static int _register_list_init(void)
     _control_logic_register_list[16].default_address = REG_AUTO_START_STOP,
     _control_logic_register_list[16].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
+    // 溫度限制暫存器 (HMI 可設定，斷電保持)
+    _control_logic_register_list[17].name = REG_T_HIGH_ALARM_STR;
+    _control_logic_register_list[17].address_ptr = &REG_T_HIGH_ALARM,
+    _control_logic_register_list[17].default_address = REG_T_HIGH_ALARM,
+    _control_logic_register_list[17].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[18].name = REG_T_LOW_ALARM_STR;
+    _control_logic_register_list[18].address_ptr = &REG_T_LOW_ALARM,
+    _control_logic_register_list[18].default_address = REG_T_LOW_ALARM,
+    _control_logic_register_list[18].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
     // try to load register array from file
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
@@ -329,6 +345,16 @@ int control_logic_ls80_1_temperature_control_init(void)
         info(debug_tag, "【開機初始化】設定溫度控制模式為手動 (REG_TEMP_CONTROL_MODE = 0)");
     } else {
         error(debug_tag, "【開機初始化】設定手動模式失敗");
+    }
+
+    // 【需求C】設定溫度限制預設值 (HMI 可修改，斷電保持)
+    // 注意: 這些值只在首次初始化時設定,之後由 HMI 寫入的值會自動保持
+    bool t_high_success = modbus_write_single_register(REG_T_HIGH_ALARM, 50);  // 50.0°C
+    bool t_low_success = modbus_write_single_register(REG_T_LOW_ALARM, 10);    // 10.0°C
+    if (t_high_success && t_low_success) {
+        info(debug_tag, "【開機初始化】設定溫度限制預設值 - 最高:50.0°C, 最低:10.0°C");
+    } else {
+        error(debug_tag, "【開機初始化】設定溫度限制預設值失敗");
     }
 
     return SUCCESS;
@@ -498,14 +524,23 @@ static int read_sensor_data(sensor_data_t *data) {
     return 0;
 }
 
-/* 暫時註解，等待安全檢查功能啟用
- * 安全檢查邏輯
+/**
+ * 安全檢查邏輯 (已啟用，使用 HMI 可設定的溫度限制)
  */
-/*
 static safety_status_t perform_safety_checks(const sensor_data_t *data) {
-    // 緊急停機檢查
-    if (data->avg_outlet_temp > MAX_TEMP_LIMIT) {
-        error(debug_tag, "出水溫度過高: %.1f°C > %.1f°C", data->avg_outlet_temp, MAX_TEMP_LIMIT);
+    // 從寄存器讀取溫度限制值 (HMI 可設定)
+    uint16_t t_high_alarm = modbus_read_input_register(REG_T_HIGH_ALARM);
+    uint16_t t_low_alarm = modbus_read_input_register(REG_T_LOW_ALARM);
+
+    // 緊急停機檢查 - 最高溫度
+    if (data->avg_outlet_temp > (float)t_high_alarm) {
+        error(debug_tag, "出水溫度過高: %.1f°C > %d°C", data->avg_outlet_temp, t_high_alarm);
+        return SAFETY_STATUS_EMERGENCY;
+    }
+
+    // 緊急停機檢查 - 最低溫度
+    if (data->avg_outlet_temp < (float)t_low_alarm) {
+        error(debug_tag, "出水溫度過低: %.1f°C < %d°C", data->avg_outlet_temp, t_low_alarm);
         return SAFETY_STATUS_EMERGENCY;
     }
 
@@ -534,7 +569,6 @@ static safety_status_t perform_safety_checks(const sensor_data_t *data) {
 
     return SAFETY_STATUS_SAFE;
 }
-*/
 
 /* 暫時註解，等待緊急停機功能啟用
  * 緊急停機程序

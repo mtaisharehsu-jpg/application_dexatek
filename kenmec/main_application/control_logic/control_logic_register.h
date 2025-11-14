@@ -146,6 +146,10 @@
 #define REG_HIGH_PRESSURE_ALARM_STR "HIGH_PRESSURE_ALARM"       // 46271 - 高壓警報觸發閾值
 #define REG_HIGH_PRESSURE_SHUTDOWN_STR "HIGH_PRESSURE_SHUTDOWN" // 46272 - 高壓關機觸發閾值
 
+/* 溫度限制暫存器 */
+#define REG_T_HIGH_ALARM_STR "T_HIGH_ALARM"  // 46001 - 最高溫度限制（°C）
+#define REG_T_LOW_ALARM_STR "T_LOW_ALARM"    // 46002 - 最低溫度限制（°C）
+
 /* 幫浦速度命令暫存器 */
 #define REG_PUMP1_SPEED_CMD_STR "PUMP1_SPEED_CMD" // 411037 - 幫浦1速度命令（重複定義）
 #define REG_PUMP2_SPEED_CMD_STR "PUMP2_SPEED_CMD" // 411039 - 幫浦2速度命令（重複定義）
