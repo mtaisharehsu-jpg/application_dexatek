@@ -588,12 +588,15 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
         warn(debug_tag, "流量控制警告狀態，繼續監控");
     }
 
-    // 【步驟5】檢查控制模式 (基於手動模式寄存器)
-    // 任何一個設備在手動模式,整個系統就是手動模式
-    int pump1_manual = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
-    // int valve_manual = modbus_read_input_register(REG_VALVE_MANUAL_MODE);  // [DISABLED] 比例閥不使用
+    // 【步驟5】檢查控制模式 (基於 AUTO_START_STOP)
+    // 修改理由: 使用 AUTO_START_STOP 判斷模式,避免與需求(保持 PUMP_MANUAL_MODE 不變)的邏輯矛盾
+    // AUTO_START_STOP = 1 → 自動模式 (執行 PID 控制)
+    // AUTO_START_STOP = 0 → 手動模式 (僅監控)
+    uint16_t auto_start_stop = modbus_read_input_register(REG_AUTO_START_STOP);
+    control_mode = (auto_start_stop == 0) ? FLOW_CONTROL_MODE_MANUAL : FLOW_CONTROL_MODE_AUTO;
 
-    control_mode = (pump1_manual > 0 /* || valve_manual > 0 */) ? FLOW_CONTROL_MODE_MANUAL : FLOW_CONTROL_MODE_AUTO;
+    info(debug_tag, "控制模式判斷 - AUTO_START_STOP=%d, control_mode=%s",
+         auto_start_stop, (control_mode == FLOW_CONTROL_MODE_AUTO) ? "AUTO" : "MANUAL");
 
     // 【步驟6】根據控制模式執行相應邏輯
     if (control_mode == FLOW_CONTROL_MODE_AUTO) {

@@ -851,12 +851,16 @@ int control_logic_ls80_2_pressure_control(ControlLogic *ptr) {
     info(debug_tag, "監控壓力 - P1(一次側進水): %.2f bar, P3(一次側出水): %.2f bar",
          sensor_data.P1_primary_inlet, sensor_data.P3_primary_outlet);
 
-    // 【步驟4】檢查控制模式
-    int pump1_manual = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
-    int pump2_manual = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
-
-    int control_mode = (pump1_manual > 0 || pump2_manual > 0) ?
+    // 【步驟4】檢查控制模式 (基於 AUTO_START_STOP)
+    // 修改理由: 使用 AUTO_START_STOP 判斷模式,避免與需求(保持 PUMP_MANUAL_MODE 不變)的邏輯矛盾
+    // AUTO_START_STOP = 1 → 自動模式 (執行 PID 控制)
+    // AUTO_START_STOP = 0 → 手動模式 (僅監控)
+    uint16_t auto_start_stop = modbus_read_input_register(REG_AUTO_START_STOP);
+    int control_mode = (auto_start_stop == 0) ?
                        PRESSURE_CONTROL_MODE_MANUAL : PRESSURE_CONTROL_MODE_AUTO;
+
+    info(debug_tag, "控制模式判斷 - AUTO_START_STOP=%d, control_mode=%s",
+         auto_start_stop, (control_mode == PRESSURE_CONTROL_MODE_AUTO) ? "AUTO" : "MANUAL");
 
     // 讀取目標壓差
     int target_raw = modbus_read_input_register(REG_PRESSURE_SETPOINT);
