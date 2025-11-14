@@ -801,8 +801,24 @@ int control_logic_ls80_2_pressure_control(ControlLogic *ptr) {
     // 【步驟1】檢查控制邏輯2是否啟用，並偵測 1→0 轉換
     uint16_t current_enable = modbus_read_input_register(REG_CONTROL_LOGIC_2_ENABLE);
 
+    // 偵測到 0→1 轉換：保存當前 PUMP_MANUAL_MODE
+    if (previous_control_logic2_enable == 0 && current_enable == 1) {
+        saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
+        saved_pump2_manual_mode = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
+        info(debug_tag, "【ENABLE_2 0→1】保存 PUMP_MANUAL_MODE - P1=%d, P2=%d",
+             saved_pump1_manual_mode, saved_pump2_manual_mode);
+    }
+
     // 偵測到 1→0 轉換：切換到手動模式並保存最後速度
     if (previous_control_logic2_enable == 1 && current_enable == 0) {
+        // 保存 PUMP_MANUAL_MODE 狀態 (避免重複保存)
+        if (saved_pump1_manual_mode == 0xFFFF) {
+            saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
+            saved_pump2_manual_mode = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
+            info(debug_tag, "【ENABLE_2 1→0】保存 PUMP_MANUAL_MODE - P1=%d, P2=%d",
+                 saved_pump1_manual_mode, saved_pump2_manual_mode);
+        }
+
         // 執行切換到手動模式
         switch_to_manual_mode_with_last_speed();
     }
