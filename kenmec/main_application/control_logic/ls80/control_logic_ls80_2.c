@@ -317,6 +317,11 @@ static void handle_auto_start_stop_and_flow_mode(void) {
             saved_pump2_manual_mode = modbus_read_input_register(REG_PUMP2_MANUAL_MODE);
             info(debug_tag, "【AUTO_START_STOP 1→0】保存 PUMP_MANUAL_MODE - P1=%d, P2=%d",
                  saved_pump1_manual_mode, saved_pump2_manual_mode);
+
+            // 設定泵浦轉速為 0
+            modbus_write_single_register(REG_PUMP1_SPEED, 0);
+            modbus_write_single_register(REG_PUMP2_SPEED, 0);
+            info(debug_tag, "【AUTO_START_STOP 1→0】設定泵浦轉速為 0");
         }
 
         modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
