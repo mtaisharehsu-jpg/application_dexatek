@@ -96,8 +96,8 @@ static uint32_t REG_VALVE_MANUAL_MODE = 45061;   // [DISABLED] 比例閥手動�
 
 // 主泵輪換相關寄存器
 static uint32_t REG_PUMP_SWITCH_HOUR = 45034;      // 主泵切換時數設定 (小時, 0=停用自動切換)
-static uint32_t REG_PUMP1_USE = 45026;             // Pump1 啟用開關 (0=停用, 1=啟用)
-static uint32_t REG_PUMP2_USE = 45027;             // Pump2 啟用開關 (0=停用, 1=啟用)
+static uint32_t REG_PUMP1_USE = 45036;             // Pump1 啟用開關 (0=停用, 1=啟用) - 避免與 REG_PUMP2_STOP 衝突
+static uint32_t REG_PUMP2_USE = 45037;             // Pump2 啟用開關 (0=停用, 1=啟用) - 避免與 REG_PUMP3_STOP 衝突
 static uint32_t REG_PRIMARY_PUMP_INDEX = 45035;    // 當前主泵編號 (1=Pump1, 2=Pump2)
 
 // AUTO 模式累計時間寄存器 (斷電保持)
@@ -486,6 +486,48 @@ static int _register_list_init(void)
     _control_logic_register_list[14].default_address = REG_VALVE_MANUAL_MODE;
     _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
     */
+
+    // 主泵輪換控制寄存器
+    _control_logic_register_list[13].name = REG_PUMP_SWITCH_HOUR_STR;
+    _control_logic_register_list[13].address_ptr = &REG_PUMP_SWITCH_HOUR;
+    _control_logic_register_list[13].default_address = REG_PUMP_SWITCH_HOUR;
+    _control_logic_register_list[13].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[14].name = REG_PRIMARY_PUMP_INDEX_STR;
+    _control_logic_register_list[14].address_ptr = &REG_PRIMARY_PUMP_INDEX;
+    _control_logic_register_list[14].default_address = REG_PRIMARY_PUMP_INDEX;
+    _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[15].name = REG_PUMP1_USE_STR;
+    _control_logic_register_list[15].address_ptr = &REG_PUMP1_USE;
+    _control_logic_register_list[15].default_address = REG_PUMP1_USE;
+    _control_logic_register_list[15].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[16].name = REG_PUMP2_USE_STR;
+    _control_logic_register_list[16].address_ptr = &REG_PUMP2_USE;
+    _control_logic_register_list[16].default_address = REG_PUMP2_USE;
+    _control_logic_register_list[16].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // AUTO 模式累計時間寄存器
+    _control_logic_register_list[17].name = REG_PUMP1_AUTO_MODE_HOURS_STR;
+    _control_logic_register_list[17].address_ptr = &REG_PUMP1_AUTO_MODE_HOURS;
+    _control_logic_register_list[17].default_address = REG_PUMP1_AUTO_MODE_HOURS;
+    _control_logic_register_list[17].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[18].name = REG_PUMP2_AUTO_MODE_HOURS_STR;
+    _control_logic_register_list[18].address_ptr = &REG_PUMP2_AUTO_MODE_HOURS;
+    _control_logic_register_list[18].default_address = REG_PUMP2_AUTO_MODE_HOURS;
+    _control_logic_register_list[18].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[19].name = REG_PUMP1_AUTO_MODE_MINUTES_STR;
+    _control_logic_register_list[19].address_ptr = &REG_PUMP1_AUTO_MODE_MINUTES;
+    _control_logic_register_list[19].default_address = REG_PUMP1_AUTO_MODE_MINUTES;
+    _control_logic_register_list[19].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[20].name = REG_PUMP2_AUTO_MODE_MINUTES_STR;
+    _control_logic_register_list[20].address_ptr = &REG_PUMP2_AUTO_MODE_MINUTES;
+    _control_logic_register_list[20].default_address = REG_PUMP2_AUTO_MODE_MINUTES;
+    _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);

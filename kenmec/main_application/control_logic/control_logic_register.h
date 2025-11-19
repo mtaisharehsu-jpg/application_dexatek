@@ -114,6 +114,18 @@
 #define REG_PUMP_MIN_SPEED_STR "PUMP_MIN_SPEED" // 45031 - 幫浦最低運轉速度（RPM 或 Hz）
 #define REG_PUMP_MAX_SPEED_STR "PUMP_MAX_SPEED" // 45032 - 幫浦最高運轉速度（RPM 或 Hz）
 
+/* 主泵輪換控制暫存器 - 雙泵浦定時輪流主控功能 */
+#define REG_PUMP_SWITCH_HOUR_STR "PUMP_SWITCH_HOUR"           // 45034 - 主泵切換時數設定 (小時, 0=停用)
+#define REG_PRIMARY_PUMP_INDEX_STR "PRIMARY_PUMP_INDEX"       // 45035 - 當前主泵編號 (1=Pump1, 2=Pump2)
+#define REG_PUMP1_USE_STR "PUMP1_USE"                         // 45036 - Pump1 啟用開關 (0=停用, 1=啟用)
+#define REG_PUMP2_USE_STR "PUMP2_USE"                         // 45037 - Pump2 啟用開關 (0=停用, 1=啟用)
+
+/* AUTO 模式累計時間暫存器 - 記錄主泵在 AUTO 模式的運轉時間 (斷電保持) */
+#define REG_PUMP1_AUTO_MODE_HOURS_STR "PUMP1_AUTO_MODE_HOURS"     // 42170 - Pump1 AUTO 模式累計時間 (小時)
+#define REG_PUMP2_AUTO_MODE_HOURS_STR "PUMP2_AUTO_MODE_HOURS"     // 42171 - Pump2 AUTO 模式累計時間 (小時)
+#define REG_PUMP1_AUTO_MODE_MINUTES_STR "PUMP1_AUTO_MODE_MINUTES" // 42172 - Pump1 AUTO 模式累計時間 (分鐘)
+#define REG_PUMP2_AUTO_MODE_MINUTES_STR "PUMP2_AUTO_MODE_MINUTES" // 42173 - Pump2 AUTO 模式累計時間 (分鐘)
+
 /* 系統時序控制暫存器 - 控制系統運行的各種延遲和時間參數 */
 #define REG_TARGET_PRESSURE_STR "TARGET_PRESSURE"       // 45051 - 目標壓力值（重複定義）
 #define REG_START_DELAY_STR "START_DELAY"               // 45052 - 啟動延遲時間（秒）
@@ -149,6 +161,14 @@
 /* 溫度限制暫存器 */
 #define REG_T_HIGH_ALARM_STR "T_HIGH_ALARM"  // 46001 - 最高溫度限制（°C）
 #define REG_T_LOW_ALARM_STR "T_LOW_ALARM"    // 46002 - 最低溫度限制（°C）
+
+/* 壓力限制暫存器 (LS80-2) */
+#define REG_P_HIGH_ALARM_STR "P_HIGH_ALARM"  // 46201 - 最高壓力限制（Bar）
+#define REG_P_LOW_ALARM_STR "P_LOW_ALARM"    // 46202 - 最低壓力限制（Bar）
+
+/* 流量限制暫存器 (LS80-3) */
+#define REG_F_HIGH_ALARM_STR "F_HIGH_ALARM"  // 46401 - 最高流量限制（LPM）
+#define REG_F_LOW_ALARM_STR "F_LOW_ALARM"    // 46402 - 最低流量限制（LPM）
 
 /* 幫浦速度命令暫存器 */
 #define REG_PUMP1_SPEED_CMD_STR "PUMP1_SPEED_CMD" // 411037 - 幫浦1速度命令（重複定義）
