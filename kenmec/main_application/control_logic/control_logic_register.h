@@ -126,6 +126,20 @@
 #define REG_PUMP1_AUTO_MODE_MINUTES_STR "PUMP1_AUTO_MODE_MINUTES" // 42172 - Pump1 AUTO 模式累計時間 (分鐘)
 #define REG_PUMP2_AUTO_MODE_MINUTES_STR "PUMP2_AUTO_MODE_MINUTES" // 42173 - Pump2 AUTO 模式累計時間 (分鐘)
 
+/* 泵浦運轉時間寄存器 - 記錄泵浦累計運轉時間 (斷電保持) */
+#define REG_PUMP1_RUNTIME_SEC_STR "PUMP1_RUNTIME_SEC"     // 42161 - Pump1 運轉時間 (秒, 0-59)
+#define REG_PUMP1_RUNTIME_MIN_STR "PUMP1_RUNTIME_MIN"     // 42162 - Pump1 運轉時間 (分, 0-59)
+#define REG_PUMP1_RUNTIME_HOUR_STR "PUMP1_RUNTIME_HOUR"   // 42163 - Pump1 運轉時間 (時, 0-23)
+#define REG_PUMP1_RUNTIME_DAY_STR "PUMP1_RUNTIME_DAY"     // 42164 - Pump1 運轉時間 (天, 累積)
+#define REG_PUMP2_RUNTIME_SEC_STR "PUMP2_RUNTIME_SEC"     // 42165 - Pump2 運轉時間 (秒, 0-59)
+#define REG_PUMP2_RUNTIME_MIN_STR "PUMP2_RUNTIME_MIN"     // 42166 - Pump2 運轉時間 (分, 0-59)
+#define REG_PUMP2_RUNTIME_HOUR_STR "PUMP2_RUNTIME_HOUR"   // 42167 - Pump2 運轉時間 (時, 0-23)
+#define REG_PUMP2_RUNTIME_DAY_STR "PUMP2_RUNTIME_DAY"     // 42168 - Pump2 運轉時間 (天, 累積)
+
+/* 泵浦運轉時間歸零控制 */
+#define REG_PUMP1_RUNTIME_RESET_STR "PUMP1_RUNTIME_RESET" // 45041 - Pump1 運轉時間歸零
+#define REG_PUMP2_RUNTIME_RESET_STR "PUMP2_RUNTIME_RESET" // 45042 - Pump2 運轉時間歸零
+
 /* 系統時序控制暫存器 - 控制系統運行的各種延遲和時間參數 */
 #define REG_TARGET_PRESSURE_STR "TARGET_PRESSURE"       // 45051 - 目標壓力值（重複定義）
 #define REG_START_DELAY_STR "START_DELAY"               // 45052 - 啟動延遲時間（秒）

@@ -36,7 +36,7 @@
 static const char* debug_tag = "ls80_7_2dc_pump";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_7.json"
-#define CONFIG_REGISTER_LIST_SIZE 30
+#define CONFIG_REGISTER_LIST_SIZE 40  // 擴大以容納運轉時間寄存器
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 /*---------------------------------------------------------------------------
@@ -89,8 +89,8 @@ static uint32_t PUMP2_RUNTIME_HOUR_REG = 42167;  // Pump2 運轉時間 - 時 (0-
 static uint32_t PUMP2_RUNTIME_DAY_REG = 42168;   // Pump2 運轉時間 - 天 (累積)
 
 // 運轉時間歸零控制寄存器
-static uint32_t PUMP1_RUNTIME_RESET_REG = 45037; // Pump1 運轉時間歸零
-static uint32_t PUMP2_RUNTIME_RESET_REG = 45038; // Pump2 運轉時間歸零
+static uint32_t PUMP1_RUNTIME_RESET_REG = 45041; // Pump1 運轉時間歸零 (避免與 REG_PUMP2_USE 衝突)
+static uint32_t PUMP2_RUNTIME_RESET_REG = 45042; // Pump2 運轉時間歸零 (避免地址衝突)
 
 /*---------------------------------------------------------------------------
                             Static Variables
@@ -290,6 +290,59 @@ static int _register_list_init(void)
     _control_logic_register_list[25].address_ptr = &PRESSURE_FEEDBACK_REG;
     _control_logic_register_list[25].default_address = PRESSURE_FEEDBACK_REG;
     _control_logic_register_list[25].type = CONTROL_LOGIC_REGISTER_READ;
+
+    // 泵浦1運轉時間寄存器
+    _control_logic_register_list[26].name = REG_PUMP1_RUNTIME_SEC_STR;
+    _control_logic_register_list[26].address_ptr = &PUMP1_RUNTIME_SEC_REG;
+    _control_logic_register_list[26].default_address = PUMP1_RUNTIME_SEC_REG;
+    _control_logic_register_list[26].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[27].name = REG_PUMP1_RUNTIME_MIN_STR;
+    _control_logic_register_list[27].address_ptr = &PUMP1_RUNTIME_MIN_REG;
+    _control_logic_register_list[27].default_address = PUMP1_RUNTIME_MIN_REG;
+    _control_logic_register_list[27].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[28].name = REG_PUMP1_RUNTIME_HOUR_STR;
+    _control_logic_register_list[28].address_ptr = &PUMP1_RUNTIME_HOUR_REG;
+    _control_logic_register_list[28].default_address = PUMP1_RUNTIME_HOUR_REG;
+    _control_logic_register_list[28].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[29].name = REG_PUMP1_RUNTIME_DAY_STR;
+    _control_logic_register_list[29].address_ptr = &PUMP1_RUNTIME_DAY_REG;
+    _control_logic_register_list[29].default_address = PUMP1_RUNTIME_DAY_REG;
+    _control_logic_register_list[29].type = CONTROL_LOGIC_REGISTER_READ;
+
+    // 泵浦2運轉時間寄存器
+    _control_logic_register_list[30].name = REG_PUMP2_RUNTIME_SEC_STR;
+    _control_logic_register_list[30].address_ptr = &PUMP2_RUNTIME_SEC_REG;
+    _control_logic_register_list[30].default_address = PUMP2_RUNTIME_SEC_REG;
+    _control_logic_register_list[30].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[31].name = REG_PUMP2_RUNTIME_MIN_STR;
+    _control_logic_register_list[31].address_ptr = &PUMP2_RUNTIME_MIN_REG;
+    _control_logic_register_list[31].default_address = PUMP2_RUNTIME_MIN_REG;
+    _control_logic_register_list[31].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[32].name = REG_PUMP2_RUNTIME_HOUR_STR;
+    _control_logic_register_list[32].address_ptr = &PUMP2_RUNTIME_HOUR_REG;
+    _control_logic_register_list[32].default_address = PUMP2_RUNTIME_HOUR_REG;
+    _control_logic_register_list[32].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[33].name = REG_PUMP2_RUNTIME_DAY_STR;
+    _control_logic_register_list[33].address_ptr = &PUMP2_RUNTIME_DAY_REG;
+    _control_logic_register_list[33].default_address = PUMP2_RUNTIME_DAY_REG;
+    _control_logic_register_list[33].type = CONTROL_LOGIC_REGISTER_READ;
+
+    // 運轉時間重置寄存器
+    _control_logic_register_list[34].name = REG_PUMP1_RUNTIME_RESET_STR;
+    _control_logic_register_list[34].address_ptr = &PUMP1_RUNTIME_RESET_REG;
+    _control_logic_register_list[34].default_address = PUMP1_RUNTIME_RESET_REG;
+    _control_logic_register_list[34].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[35].name = REG_PUMP2_RUNTIME_RESET_STR;
+    _control_logic_register_list[35].address_ptr = &PUMP2_RUNTIME_RESET_REG;
+    _control_logic_register_list[35].default_address = PUMP2_RUNTIME_RESET_REG;
+    _control_logic_register_list[35].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     // try to load register array from file
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
@@ -642,8 +695,8 @@ static void accumulate_pump_runtime(uint32_t sec_reg, uint32_t min_reg,
     uint16_t hour = modbus_read_input_register(hour_reg);
     uint16_t day = modbus_read_input_register(day_reg);
 
-    debug(debug_tag, "累積前 - 秒:%d 分:%d 時:%d 天:%d (累積 %ld 秒)",
-          sec, min, hour, day, (long)elapsed);
+    info(debug_tag, "累積前 - 秒:%d 分:%d 時:%d 天:%d (即將累積 %ld 秒) [寄存器: %d/%d/%d/%d]",
+          sec, min, hour, day, (long)elapsed, sec_reg, min_reg, hour_reg, day_reg);
 
     // 累積秒數
     sec += elapsed;
@@ -667,12 +720,13 @@ static void accumulate_pump_runtime(uint32_t sec_reg, uint32_t min_reg,
     }
 
     // 寫回寄存器
-    modbus_write_single_register(sec_reg, sec);
-    modbus_write_single_register(min_reg, min);
-    modbus_write_single_register(hour_reg, hour);
-    modbus_write_single_register(day_reg, day);
+    bool write_sec = modbus_write_single_register(sec_reg, sec);
+    bool write_min = modbus_write_single_register(min_reg, min);
+    bool write_hour = modbus_write_single_register(hour_reg, hour);
+    bool write_day = modbus_write_single_register(day_reg, day);
 
-    debug(debug_tag, "累積後 - 秒:%d 分:%d 時:%d 天:%d", sec, min, hour, day);
+    info(debug_tag, "累積後 - 秒:%d 分:%d 時:%d 天:%d [寫入結果: %d/%d/%d/%d]",
+         sec, min, hour, day, write_sec, write_min, write_hour, write_day);
 }
 
 /**
@@ -721,12 +775,16 @@ static void update_pump_runtime(pump_runtime_tracker_t *tracker,
     uint16_t is_running = (speed_cmd > 0) ? 1 : 0;
     time_t current_time = time(NULL);
 
+    debug(debug_tag, "【%s】速度命令=%d%%, 運轉狀態=%d, 寄存器地址=0x%X",
+          pump_name, speed_cmd, is_running, speed_cmd_reg);
+
     // 初始化追蹤器
     if (!tracker->initialized) {
         tracker->last_update_time = current_time;
         tracker->last_running_state = (is_running == 1);
         tracker->initialized = true;
-        debug(debug_tag, "【%s 運轉時間追蹤】初始化完成", pump_name);
+        info(debug_tag, "【%s 運轉時間追蹤】初始化完成 - 速度=%d%%, 運轉=%d",
+             pump_name, speed_cmd, is_running);
         return;
     }
 
@@ -735,13 +793,22 @@ static void update_pump_runtime(pump_runtime_tracker_t *tracker,
         // 計算經過的時間 (秒)
         time_t elapsed = difftime(current_time, tracker->last_update_time);
 
+        debug(debug_tag, "【%s】持續運轉中 - 經過時間=%ld秒, 上次狀態=%d",
+              pump_name, (long)elapsed, tracker->last_running_state);
+
         if (elapsed >= 1) {  // 至少累積 1 秒
+            info(debug_tag, "【%s 運轉時間】開始累積 %ld 秒 (寄存器: %d/%d/%d/%d)",
+                 pump_name, (long)elapsed, sec_reg, min_reg, hour_reg, day_reg);
             accumulate_pump_runtime(sec_reg, min_reg, hour_reg, day_reg, elapsed);
             tracker->last_update_time = current_time;
-            debug(debug_tag, "【%s 運轉時間】累積 %ld 秒", pump_name, (long)elapsed);
+            info(debug_tag, "【%s 運轉時間】累積完成", pump_name);
         }
     } else {
         // 泵浦停止或狀態改變，更新時間戳
+        if (tracker->last_running_state != (is_running == 1)) {
+            info(debug_tag, "【%s】運轉狀態改變: %d → %d",
+                 pump_name, tracker->last_running_state, is_running);
+        }
         tracker->last_update_time = current_time;
     }
 
