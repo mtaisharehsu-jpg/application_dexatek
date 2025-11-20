@@ -226,6 +226,9 @@ typedef struct {
 // 顯示時間全局追蹤器
 static display_time_tracker_t display_tracker = {0, false, false, 0};
 
+// 追蹤主泵變化 (用於偵測 HMI 手動修改)
+static uint16_t last_primary_pump_index = 0;
+
 /*---------------------------------------------------------------------------
 							Function Prototypes
  ---------------------------------------------------------------------------*/
@@ -746,6 +749,13 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
              modbus_read_input_register(REG_PUMP2_AUTO_MODE_HOURS),
              modbus_read_input_register(REG_PUMP2_AUTO_MODE_MINUTES));
 
+        // 初始化主泵變化追蹤
+        last_primary_pump_index = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
+        if (last_primary_pump_index != 1 && last_primary_pump_index != 2) {
+            last_primary_pump_index = 1;
+        }
+        info(debug_tag, "初始化主泵變化追蹤: primary_pump=%d", last_primary_pump_index);
+
         registers_initialized = true;
     }
 
@@ -1112,6 +1122,7 @@ static void update_primary_pump_auto_time(int pump_index,
  * - 當 AUTO_START_STOP = 1 時,累積時間到 45046/45047
  * - 與 Pump1/Pump2 各自的累積時間 (42170-42173) 分開計算
  * - 用於 HMI 顯示和切換判斷
+ * - 偵測主泵變化,變化時自動歸零顯示時間
  */
 static void update_display_auto_time(void) {
     // 讀取 AUTO_START_STOP 狀態
@@ -1120,6 +1131,34 @@ static void update_display_auto_time(void) {
 
     time_t current_time = time(NULL);
 
+    // 【新增】檢測主泵是否被改變 (HMI 手動修改偵測)
+    uint16_t current_primary = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
+    if (current_primary != 1 && current_primary != 2) {
+        current_primary = 1;  // 預設為 Pump1
+    }
+
+    if (current_primary != last_primary_pump_index) {
+        // HMI 手動修改了主泵!
+        info(debug_tag, "偵測到主泵變化: Pump%d -> Pump%d",
+             last_primary_pump_index, current_primary);
+
+        // 歸零顯示時間寄存器
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
+
+        // 重置累積秒數
+        display_tracker.accumulated_seconds = 0;
+
+        // 更新時間戳,防止首次累積出現大量秒數
+        display_tracker.last_update_time = current_time;
+
+        // 更新追蹤值
+        last_primary_pump_index = current_primary;
+
+        info(debug_tag, "主泵顯示時間已歸零 (45046=0, 45047=0)");
+        return;  // 本次循環不進行累積,避免包含過渡時的時間
+    }
+
     // 初始化追蹤器
     if (!display_tracker.initialized) {
         display_tracker.last_update_time = current_time;
@@ -1127,7 +1166,8 @@ static void update_display_auto_time(void) {
         display_tracker.accumulated_seconds = 0;
         display_tracker.initialized = true;
 
-        info(debug_tag, "顯示時間追蹤器初始化: AUTO=%d", is_auto_mode);
+        info(debug_tag, "顯示時間追蹤器初始化: AUTO=%d, primary_pump=%d",
+             is_auto_mode, current_primary);
         return;
     }
 
@@ -1161,8 +1201,9 @@ static void update_display_auto_time(void) {
 
             display_tracker.last_update_time = current_time;
 
-            debug(debug_tag, "顯示時間累積: %d小時%d分%d秒 (累積%ld秒)",
-                  hours, minutes, display_tracker.accumulated_seconds, (long)elapsed);
+            debug(debug_tag, "主泵 Pump%d AUTO時間累積: %d小時%d分%d秒 (累積%ld秒)",
+                  current_primary, hours, minutes,
+                  display_tracker.accumulated_seconds, (long)elapsed);
         }
     }
 
