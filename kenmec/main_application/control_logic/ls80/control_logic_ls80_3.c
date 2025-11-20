@@ -696,6 +696,20 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
             info(debug_tag, "初始化主泵選擇為 Pump1");
         }
 
+        // 初始化 Pump1 啟用開關 (預設啟用)
+        uint16_t pump1_use = modbus_read_input_register(REG_PUMP1_USE);
+        if (pump1_use != 0 && pump1_use != 1) {
+            modbus_write_single_register(REG_PUMP1_USE, 1);
+            info(debug_tag, "初始化 Pump1 啟用開關為 1 (啟用)");
+        }
+
+        // 初始化 Pump2 啟用開關 (預設啟用)
+        uint16_t pump2_use = modbus_read_input_register(REG_PUMP2_USE);
+        if (pump2_use != 0 && pump2_use != 1) {
+            modbus_write_single_register(REG_PUMP2_USE, 1);
+            info(debug_tag, "初始化 Pump2 啟用開關為 1 (啟用)");
+        }
+
         // 累計時間寄存器不重置,保留斷電前的值
         info(debug_tag, "系統啟動 - Pump1 AUTO 累計: %d 小時 %d 分鐘",
              modbus_read_input_register(REG_PUMP1_AUTO_MODE_HOURS),
