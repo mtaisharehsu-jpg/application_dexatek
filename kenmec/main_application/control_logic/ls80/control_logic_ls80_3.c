@@ -549,16 +549,16 @@ static int _register_list_init(void)
     _control_logic_register_list[20].default_address = REG_PUMP2_AUTO_MODE_MINUTES;
     _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    // 當前主泵 AUTO 累積時間顯示寄存器 (獨立累積)
+    // 當前主泵 AUTO 累積時間顯示寄存器 (獨立累積, 支援斷電保持)
     _control_logic_register_list[21].name = REG_CURRENT_PRIMARY_AUTO_HOURS_STR;
     _control_logic_register_list[21].address_ptr = &REG_CURRENT_PRIMARY_AUTO_HOURS;
     _control_logic_register_list[21].default_address = REG_CURRENT_PRIMARY_AUTO_HOURS;
-    _control_logic_register_list[21].type = CONTROL_LOGIC_REGISTER_READ;
+    _control_logic_register_list[21].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     _control_logic_register_list[22].name = REG_CURRENT_PRIMARY_AUTO_MINUTES_STR;
     _control_logic_register_list[22].address_ptr = &REG_CURRENT_PRIMARY_AUTO_MINUTES;
     _control_logic_register_list[22].default_address = REG_CURRENT_PRIMARY_AUTO_MINUTES;
-    _control_logic_register_list[22].type = CONTROL_LOGIC_REGISTER_READ;
+    _control_logic_register_list[22].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
