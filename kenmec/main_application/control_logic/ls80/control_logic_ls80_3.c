@@ -67,6 +67,11 @@ static const char *debug_tag = "ls80_3_flow";
 #define CONFIG_REGISTER_LIST_SIZE 25
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
+// 顯示時間持久化配置
+#define DISPLAY_TIME_PERSIST_FILE "/usrdata/ls80_3_display_time.json"
+#define DISPLAY_TIME_SAVE_INTERVAL 300  // 每 5 分鐘保存一次 (秒)
+static time_t last_display_time_save = 0;  // 上次保存時間戳
+
 // 系統狀態寄存器
 static uint32_t REG_CONTROL_LOGIC_2_ENABLE = 41002; // 控制邏輯2啟用
 static uint32_t REG_CONTROL_LOGIC_3_ENABLE = 41003; // 控制邏輯3啟用
@@ -248,6 +253,8 @@ static void calculate_basic_pump_control(float pid_output, flow_control_output_t
 static void execute_flow_control_output(const flow_control_output_t *output);
 static void update_display_auto_time(void);
 static void check_and_switch_primary_pump(void);
+static int save_display_time_to_file(void);
+static int restore_display_time_from_file(void);
 //static float calculate_valve_adjustment(float pid_output, const flow_sensor_data_t *data);
 
 /*---------------------------------------------------------------------------
@@ -642,6 +649,20 @@ int control_logic_ls80_3_flow_control_init(void)
     }
 
     info(debug_tag, "【診斷】流量限制初始化完成");
+
+    // ========== 恢復顯示時間 (斷電保持機制) ==========
+    info(debug_tag, "【診斷】開始恢復顯示時間...");
+
+    if (restore_display_time_from_file() == SUCCESS) {
+        info(debug_tag, "【開機初始化】顯示時間恢復成功 ✓");
+    } else {
+        // 文件不存在或損壞,使用預設值 0
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
+        info(debug_tag, "【開機初始化】顯示時間初始化為 0:00 ✓");
+    }
+
+    info(debug_tag, "【診斷】顯示時間初始化完成");
 
     return ret;
 }
@@ -1116,6 +1137,139 @@ static void update_primary_pump_auto_time(int pump_index,
 }
 
 /**
+ * 保存顯示時間到文件
+ *
+ * 功能:
+ * - 將 REG_CURRENT_PRIMARY_AUTO_HOURS (45046) 和
+ *   REG_CURRENT_PRIMARY_AUTO_MINUTES (45047) 保存到 JSON 文件
+ * - 使用 fsync 確保數據寫入磁盤
+ *
+ * @return SUCCESS 成功, FAIL 失敗
+ */
+static int save_display_time_to_file(void) {
+    // 讀取當前顯示時間寄存器
+    uint16_t hours = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_HOURS);
+    uint16_t minutes = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_MINUTES);
+
+    // 建立 JSON 對象
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        error(debug_tag, "【斷電保持】建立 JSON 對象失敗");
+        return FAIL;
+    }
+
+    // 添加時間數據
+    cJSON_AddNumberToObject(root, "display_hours", hours);
+    cJSON_AddNumberToObject(root, "display_minutes", minutes);
+    cJSON_AddNumberToObject(root, "timestamp", (double)time(NULL));
+
+    // 轉換為 JSON 字符串
+    char *json_string = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+
+    if (json_string == NULL) {
+        error(debug_tag, "【斷電保持】轉換 JSON 字符串失敗");
+        return FAIL;
+    }
+
+    // 保存到文件
+    FILE *fp = fopen(DISPLAY_TIME_PERSIST_FILE, "w");
+    if (!fp) {
+        error(debug_tag, "【斷電保持】無法打開文件寫入: %s", DISPLAY_TIME_PERSIST_FILE);
+        free(json_string);
+        return FAIL;
+    }
+
+    size_t len = strlen(json_string);
+    size_t written = fwrite(json_string, 1, len, fp);
+
+    // 刷新 stdio 緩衝區到內核頁面緩存
+    fflush(fp);
+
+    // 強制刷新到存儲設備 (確保斷電後數據不丟失)
+    int fd = fileno(fp);
+    if (fsync(fd) != 0) {
+        warn(debug_tag, "【斷電保持】fsync 失敗,數據可能在斷電時丟失");
+    }
+
+    fclose(fp);
+    free(json_string);
+
+    if (written != len) {
+        error(debug_tag, "【斷電保持】寫入文件失敗: %s", DISPLAY_TIME_PERSIST_FILE);
+        return FAIL;
+    }
+
+    debug(debug_tag, "【斷電保持】顯示時間已保存: %d 小時 %d 分鐘", hours, minutes);
+    return SUCCESS;
+}
+
+/**
+ * 從文件恢復顯示時間
+ *
+ * 功能:
+ * - 系統啟動時讀取上次保存的顯示時間
+ * - 恢復到 REG_CURRENT_PRIMARY_AUTO_HOURS (45046) 和
+ *   REG_CURRENT_PRIMARY_AUTO_MINUTES (45047)
+ *
+ * @return SUCCESS 成功, FAIL 失敗或文件不存在
+ */
+static int restore_display_time_from_file(void) {
+    // 讀取整個文件
+    long json_len = 0;
+    char *json_text = control_logic_read_entire_file(DISPLAY_TIME_PERSIST_FILE, &json_len);
+
+    if (json_text == NULL) {
+        info(debug_tag, "【斷電保持】顯示時間持久化文件不存在,使用預設值 0");
+        return FAIL;
+    }
+
+    // 解析 JSON
+    cJSON *root = cJSON_Parse(json_text);
+    free(json_text);
+
+    if (root == NULL) {
+        error(debug_tag, "【斷電保持】解析 JSON 失敗,文件可能已損壞");
+        remove(DISPLAY_TIME_PERSIST_FILE);  // 刪除損壞文件
+        return FAIL;
+    }
+
+    // 讀取時間數據
+    cJSON *hours_item = cJSON_GetObjectItemCaseSensitive(root, "display_hours");
+    cJSON *minutes_item = cJSON_GetObjectItemCaseSensitive(root, "display_minutes");
+
+    if (!cJSON_IsNumber(hours_item) || !cJSON_IsNumber(minutes_item)) {
+        error(debug_tag, "【斷電保持】JSON 格式錯誤,缺少必要字段");
+        cJSON_Delete(root);
+        remove(DISPLAY_TIME_PERSIST_FILE);  // 刪除損壞文件
+        return FAIL;
+    }
+
+    uint16_t hours = (uint16_t)hours_item->valueint;
+    uint16_t minutes = (uint16_t)minutes_item->valueint;
+
+    // 數據驗證 (防止異常值)
+    if (minutes >= 60) {
+        warn(debug_tag, "【斷電保持】恢復的分鐘數無效: %d, 使用 0", minutes);
+        minutes = 0;
+    }
+
+    if (hours > 100000) {
+        warn(debug_tag, "【斷電保持】恢復的小時數異常大: %d, 使用 0", hours);
+        hours = 0;
+    }
+
+    // 寫回寄存器
+    modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, hours);
+    modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, minutes);
+
+    info(debug_tag, "【斷電保持】成功恢復顯示時間: %d 小時 %d 分鐘", hours, minutes);
+
+    cJSON_Delete(root);
+    return SUCCESS;
+}
+
+/**
  * 更新當前主泵 AUTO 累積時間 (顯示寄存器 45046/45047)
  *
  * 功能:
@@ -1210,6 +1364,14 @@ static void update_display_auto_time(void) {
     // 更新狀態
     display_tracker.last_auto_mode_state = is_auto_mode;
     display_tracker.last_update_time = current_time;
+
+    // ========== 定期保存顯示時間 ==========
+    // 每 5 分鐘保存一次,避免頻繁寫入磁盤
+    if (difftime(current_time, last_display_time_save) >= DISPLAY_TIME_SAVE_INTERVAL) {
+        if (save_display_time_to_file() == SUCCESS) {
+            last_display_time_save = current_time;
+        }
+    }
 }
 
 /**
@@ -1263,6 +1425,10 @@ static void check_and_switch_primary_pump(void) {
         info(debug_tag, "主泵切換: Pump%d -> Pump%d (顯示時間達到 %d 小時 %d 分,設定值 %d 小時)",
              current_primary, new_primary, display_hours, display_minutes, switch_hour);
         info(debug_tag, "顯示時間已歸零,原始 Pump1/Pump2 累計時間不受影響");
+
+        // ========== 立即保存顯示時間 (已歸零) ==========
+        save_display_time_to_file();
+        last_display_time_save = time(NULL);  // 更新保存時間戳
     }
 }
 
