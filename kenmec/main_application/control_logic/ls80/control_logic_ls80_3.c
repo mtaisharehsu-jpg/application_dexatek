@@ -698,14 +698,14 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
 
         // 初始化 Pump1 啟用開關 (預設啟用)
         uint16_t pump1_use = modbus_read_input_register(REG_PUMP1_USE);
-        if (pump1_use != 0 && pump1_use != 1) {
+        if (pump1_use == 0) {
             modbus_write_single_register(REG_PUMP1_USE, 1);
             info(debug_tag, "初始化 Pump1 啟用開關為 1 (啟用)");
         }
 
         // 初始化 Pump2 啟用開關 (預設啟用)
         uint16_t pump2_use = modbus_read_input_register(REG_PUMP2_USE);
-        if (pump2_use != 0 && pump2_use != 1) {
+        if (pump2_use == 0) {
             modbus_write_single_register(REG_PUMP2_USE, 1);
             info(debug_tag, "初始化 Pump2 啟用開關為 1 (啟用)");
         }
