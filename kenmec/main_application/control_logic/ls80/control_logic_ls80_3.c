@@ -98,7 +98,11 @@ static uint32_t REG_VALVE_MANUAL_MODE = 45061;   // [DISABLED] 比例閥手動�
 static uint32_t REG_PUMP_SWITCH_HOUR = 45034;      // 主泵切換時數設定 (小時, 0=停用自動切換)
 static uint32_t REG_PUMP1_USE = 45036;             // Pump1 啟用開關 (0=停用, 1=啟用) - 避免與 REG_PUMP2_STOP 衝突
 static uint32_t REG_PUMP2_USE = 45037;             // Pump2 啟用開關 (0=停用, 1=啟用) - 避免與 REG_PUMP3_STOP 衝突
-static uint32_t REG_PRIMARY_PUMP_INDEX = 45035;    // 當前主泵編號 (1=Pump1, 2=Pump2)
+static uint32_t REG_PRIMARY_PUMP_INDEX = 45045;    // 當前主泵編號 (1=Pump1, 2=Pump2) - HMI 可指定
+
+// 當前主泵 AUTO 模式累積時間顯示寄存器 (獨立累積,用於顯示和切換判斷)
+static uint32_t REG_CURRENT_PRIMARY_AUTO_HOURS = 45046;    // 顯示用累積小時
+static uint32_t REG_CURRENT_PRIMARY_AUTO_MINUTES = 45047;  // 顯示用累積分鐘
 
 // AUTO 模式累計時間寄存器 (斷電保持)
 static uint32_t REG_PUMP1_AUTO_MODE_HOURS = 42170;    // Pump1 作為主泵在 AUTO 模式累計時間 (小時)
@@ -211,6 +215,17 @@ typedef struct {
 static primary_pump_auto_tracker_t pump1_auto_tracker = {0, false, false};
 static primary_pump_auto_tracker_t pump2_auto_tracker = {0, false, false};
 
+// 顯示時間追蹤結構 (獨立於 Pump1/Pump2 的累積)
+typedef struct {
+    time_t last_update_time;       // 上次更新時間戳
+    bool last_auto_mode_state;     // 上次 AUTO 模式狀態
+    bool initialized;              // 是否已初始化
+    uint16_t accumulated_seconds;  // 累積秒數 (用於進位)
+} display_time_tracker_t;
+
+// 顯示時間全局追蹤器
+static display_time_tracker_t display_tracker = {0, false, false, 0};
+
 /*---------------------------------------------------------------------------
 							Function Prototypes
  ---------------------------------------------------------------------------*/
@@ -228,6 +243,8 @@ static int execute_manual_flow_control_mode(float target_flow);
 static int execute_automatic_flow_control_mode(const flow_sensor_data_t *data);
 static void calculate_basic_pump_control(float pid_output, flow_control_output_t *output);
 static void execute_flow_control_output(const flow_control_output_t *output);
+static void update_display_auto_time(void);
+static void check_and_switch_primary_pump(void);
 //static float calculate_valve_adjustment(float pid_output, const flow_sensor_data_t *data);
 
 /*---------------------------------------------------------------------------
@@ -529,6 +546,17 @@ static int _register_list_init(void)
     _control_logic_register_list[20].default_address = REG_PUMP2_AUTO_MODE_MINUTES;
     _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
+    // 當前主泵 AUTO 累積時間顯示寄存器 (獨立累積)
+    _control_logic_register_list[21].name = REG_CURRENT_PRIMARY_AUTO_HOURS_STR;
+    _control_logic_register_list[21].address_ptr = &REG_CURRENT_PRIMARY_AUTO_HOURS;
+    _control_logic_register_list[21].default_address = REG_CURRENT_PRIMARY_AUTO_HOURS;
+    _control_logic_register_list[21].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[22].name = REG_CURRENT_PRIMARY_AUTO_MINUTES_STR;
+    _control_logic_register_list[22].address_ptr = &REG_CURRENT_PRIMARY_AUTO_MINUTES;
+    _control_logic_register_list[22].default_address = REG_CURRENT_PRIMARY_AUTO_MINUTES;
+    _control_logic_register_list[22].type = CONTROL_LOGIC_REGISTER_READ;
+
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
     debug(debug_tag, "load register array from file %s, ret %d", CONFIG_REGISTER_FILE_PATH, ret);
@@ -829,6 +857,14 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
     // 恢復 PUMP_MANUAL_MODE 狀態 (如果在 FLOW_MODE 切換時有保存)
     restore_pump_manual_mode_if_saved();
 
+    // 【步驟7】更新顯示時間累積 (45046/45047)
+    // 當 AUTO_START_STOP = 1 時,累積顯示時間
+    update_display_auto_time();
+
+    // 【步驟8】檢查並執行主泵自動切換
+    // 當顯示時間達到設定值時,切換主泵並歸零顯示時間
+    check_and_switch_primary_pump();
+
     debug(debug_tag, "=== CDU流量控制循環完成 ===");
     return ret;
 }
@@ -1070,56 +1106,122 @@ static void update_primary_pump_auto_time(int pump_index,
 }
 
 /**
- * 檢查並執行主泵切換邏輯
- * 當主泵累計時間達到設定值時,切換主泵
+ * 更新當前主泵 AUTO 累積時間 (顯示寄存器 45046/45047)
+ *
+ * 功能:
+ * - 當 AUTO_START_STOP = 1 時,累積時間到 45046/45047
+ * - 與 Pump1/Pump2 各自的累積時間 (42170-42173) 分開計算
+ * - 用於 HMI 顯示和切換判斷
  */
-static void check_and_switch_primary_pump(void) {
-    static time_t last_check_time = 0;
+static void update_display_auto_time(void) {
+    // 讀取 AUTO_START_STOP 狀態
+    uint16_t auto_start_stop = modbus_read_input_register(REG_AUTO_START_STOP);
+    bool is_auto_mode = (auto_start_stop == 1);
+
     time_t current_time = time(NULL);
 
-    // 每 10 分鐘檢查一次 (避免頻繁切換)
-    if (difftime(current_time, last_check_time) < 600) {
+    // 初始化追蹤器
+    if (!display_tracker.initialized) {
+        display_tracker.last_update_time = current_time;
+        display_tracker.last_auto_mode_state = is_auto_mode;
+        display_tracker.accumulated_seconds = 0;
+        display_tracker.initialized = true;
+
+        info(debug_tag, "顯示時間追蹤器初始化: AUTO=%d", is_auto_mode);
         return;
     }
-    last_check_time = current_time;
 
+    // 只有在 AUTO 模式且持續運行時才累積時間
+    if (is_auto_mode && display_tracker.last_auto_mode_state) {
+        time_t elapsed = difftime(current_time, display_tracker.last_update_time);
+
+        if (elapsed >= 1) {  // 至少 1 秒
+            // 讀取當前累積時間
+            uint16_t hours = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_HOURS);
+            uint16_t minutes = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_MINUTES);
+
+            // 累積秒數
+            display_tracker.accumulated_seconds += elapsed;
+
+            // 秒進位到分
+            if (display_tracker.accumulated_seconds >= 60) {
+                minutes += display_tracker.accumulated_seconds / 60;
+                display_tracker.accumulated_seconds = display_tracker.accumulated_seconds % 60;
+            }
+
+            // 分進位到時
+            if (minutes >= 60) {
+                hours += minutes / 60;
+                minutes = minutes % 60;
+            }
+
+            // 寫回寄存器
+            modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, hours);
+            modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, minutes);
+
+            display_tracker.last_update_time = current_time;
+
+            debug(debug_tag, "顯示時間累積: %d小時%d分%d秒 (累積%ld秒)",
+                  hours, minutes, display_tracker.accumulated_seconds, (long)elapsed);
+        }
+    }
+
+    // 更新狀態
+    display_tracker.last_auto_mode_state = is_auto_mode;
+    display_tracker.last_update_time = current_time;
+}
+
+/**
+ * 檢查並執行主泵切換邏輯
+ * 根據顯示時間寄存器 (45046/45047) 判斷是否需要切換主泵
+ *
+ * 切換條件:
+ * - REG_CURRENT_PRIMARY_AUTO_HOURS (45046) >= REG_PUMP_SWITCH_HOUR (45034)
+ * - 且 REG_CURRENT_PRIMARY_AUTO_MINUTES (45047) = 0
+ * - 且 display_tracker.accumulated_seconds <= 1 (精確在整點觸發)
+ *
+ * 切換動作:
+ * 1. 切換主泵編號 (1 ↔ 2)
+ * 2. 將 45046/45047 歸零
+ * 3. 將 display_tracker.accumulated_seconds 歸零
+ * 4. 原始 Pump1/Pump2 累計時間 (42170-42173) 不受影響
+ */
+static void check_and_switch_primary_pump(void) {
     // 讀取切換時數設定 (0 表示停用自動切換)
     uint16_t switch_hour = modbus_read_input_register(REG_PUMP_SWITCH_HOUR);
     if (switch_hour == 0) {
         return;  // 自動切換功能停用
     }
 
-    // 讀取當前主泵
-    uint16_t current_primary = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
-    if (current_primary != 1 && current_primary != 2) {
-        current_primary = 1;  // 預設為 Pump1
-        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, current_primary);
-    }
+    // 讀取顯示時間寄存器
+    uint16_t display_hours = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_HOURS);
+    uint16_t display_minutes = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_MINUTES);
 
-    // 讀取主泵累計時間
-    uint16_t primary_hours = 0;
-    if (current_primary == 1) {
-        primary_hours = modbus_read_input_register(REG_PUMP1_AUTO_MODE_HOURS);
-    } else {
-        primary_hours = modbus_read_input_register(REG_PUMP2_AUTO_MODE_HOURS);
-    }
+    // 檢查切換條件:達到設定時數、分鐘為0、秒數<=1
+    if (display_hours >= switch_hour &&
+        display_minutes == 0 &&
+        display_tracker.accumulated_seconds <= 1) {
 
-    // 判斷是否需要切換
-    if (primary_hours >= switch_hour) {
+        // 讀取當前主泵
+        uint16_t current_primary = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
+        if (current_primary != 1 && current_primary != 2) {
+            current_primary = 1;  // 預設為 Pump1
+        }
+
+        // 切換主泵 (1 ↔ 2)
         uint16_t new_primary = (current_primary == 1) ? 2 : 1;
         modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, new_primary);
 
-        info(debug_tag, "主泵切換: Pump%d -> Pump%d (累計時間 %d 小時達到設定值 %d 小時)",
-             current_primary, new_primary, primary_hours, switch_hour);
+        // 歸零顯示時間寄存器
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
 
-        // 重置新主泵的累計時間
-        if (new_primary == 1) {
-            modbus_write_single_register(REG_PUMP1_AUTO_MODE_HOURS, 0);
-            modbus_write_single_register(REG_PUMP1_AUTO_MODE_MINUTES, 0);
-        } else {
-            modbus_write_single_register(REG_PUMP2_AUTO_MODE_HOURS, 0);
-            modbus_write_single_register(REG_PUMP2_AUTO_MODE_MINUTES, 0);
-        }
+        // 歸零累積秒數
+        display_tracker.accumulated_seconds = 0;
+
+        info(debug_tag, "主泵切換: Pump%d -> Pump%d (顯示時間達到 %d 小時 %d 分,設定值 %d 小時)",
+             current_primary, new_primary, display_hours, display_minutes, switch_hour);
+        info(debug_tag, "顯示時間已歸零,原始 Pump1/Pump2 累計時間不受影響");
     }
 }
 
@@ -1363,7 +1465,8 @@ static void calculate_basic_pump_control(float pid_output, flow_control_output_t
     // === 策略 4: 雙泵自動模式 ===
     else {
         secondary_speed = 30.0f;
-        primary_speed = pid_output - 30.0f;
+        //primary_speed = pid_output - 30.0f;
+        primary_speed = pid_output;
 
         debug(debug_tag, "雙泵自動: 非輪值=Pump%d(30%%), 主泵=Pump%d(%.1f%%)",
               (secondary_idx + 1), primary_pump, primary_speed);

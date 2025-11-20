@@ -116,7 +116,9 @@
 
 /* 主泵輪換控制暫存器 - 雙泵浦定時輪流主控功能 */
 #define REG_PUMP_SWITCH_HOUR_STR "PUMP_SWITCH_HOUR"           // 45034 - 主泵切換時數設定 (小時, 0=停用)
-#define REG_PRIMARY_PUMP_INDEX_STR "PRIMARY_PUMP_INDEX"       // 45035 - 當前主泵編號 (1=Pump1, 2=Pump2)
+#define REG_PRIMARY_PUMP_INDEX_STR "PRIMARY_PUMP_INDEX"       // 45045 - 當前主泵編號 (HMI 可指定)
+#define REG_CURRENT_PRIMARY_AUTO_HOURS_STR "CURRENT_PRIMARY_AUTO_HOURS"     // 45046 - 顯示用累積小時
+#define REG_CURRENT_PRIMARY_AUTO_MINUTES_STR "CURRENT_PRIMARY_AUTO_MINUTES" // 45047 - 顯示用累積分鐘
 #define REG_PUMP1_USE_STR "PUMP1_USE"                         // 45036 - Pump1 啟用開關 (0=停用, 1=啟用)
 #define REG_PUMP2_USE_STR "PUMP2_USE"                         // 45037 - Pump2 啟用開關 (0=停用, 1=啟用)
 
