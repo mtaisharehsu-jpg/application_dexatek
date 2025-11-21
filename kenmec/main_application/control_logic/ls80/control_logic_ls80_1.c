@@ -168,7 +168,7 @@ static int read_sensor_data(sensor_data_t *data);
 static float calculate_pid_output(pid_controller_t *pid, float setpoint, float current_value);
 // static void reset_pid_controller(pid_controller_t *pid);  // 暫時未使用
 static void adjust_pid_parameters(pid_controller_t *pid, float error);
-static int execute_manual_control_mode(float target_temp);
+static int execute_manual_control_mode(void);
 static int execute_automatic_control_mode(const sensor_data_t *data);
 static float calculate_valve_opening(float pid_output, const sensor_data_t *data);
 
@@ -486,7 +486,7 @@ int control_logic_ls80_1_temperature_control(ControlLogic *ptr) {
     } else {
         // 手動模式: 僅監控狀態,由操作員手動控制
         info(debug_tag, "手動溫度控制模式 - 僅監控狀態");
-        ret = execute_manual_control_mode(TARGET_TEMP_DEFAULT);
+        ret = execute_manual_control_mode();
     }
 
     if (ret != 0) {
@@ -695,15 +695,19 @@ static void adjust_pid_parameters(pid_controller_t *pid, float error) {
 
 /**
  * 手動控制模式
+ *
+ * 手動模式下，目標溫度由 HMI 操作員透過寄存器設定，
+ * 控制邏輯僅讀取當前設定值用於監控和日誌記錄，
+ * 不會覆寫寄存器中的目標溫度值。
  */
-static int execute_manual_control_mode(float target_temp) {
-    info(debug_tag, "手動控制模式 - 目標溫度: %.1f°C", target_temp);
+static int execute_manual_control_mode(void) {
+    // 從寄存器讀取 HMI 設定的目標溫度
+    int target_temp_raw = modbus_read_input_register(REG_TARGET_TEMP);
+    float target_temp = target_temp_raw / 10.0f;
 
-    // 設定目標溫度到寄存器
-    int target_temp_raw = (int)(target_temp * 10);
-    modbus_write_single_register(REG_TARGET_TEMP, target_temp_raw);
+    info(debug_tag, "手動控制模式 - 當前目標溫度: %.1f°C (HMI 設定)", target_temp);
 
-    // 啟用手動模式
+    // 確保比例閥手動模式已啟用
     modbus_write_single_register(REG_VALVE_MANUAL_MODE, 1);
 
     // 手動模式下僅監控，不自動調整設備
