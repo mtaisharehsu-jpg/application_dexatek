@@ -727,6 +727,19 @@ static void accumulate_pump_runtime(uint32_t sec_reg, uint32_t min_reg,
 
     info(debug_tag, "累積後 - 秒:%d 分:%d 時:%d 天:%d [寫入結果: %d/%d/%d/%d]",
          sec, min, hour, day, write_sec, write_min, write_hour, write_day);
+
+    // 特別檢查小時寄存器寫入失敗
+    if (!write_hour) {
+        error(debug_tag, "【警告】小時寄存器 %d 寫入失敗！值=%d", hour_reg, hour);
+
+        // 重試一次
+        bool retry_result = modbus_write_single_register(hour_reg, hour);
+        if (retry_result) {
+            info(debug_tag, "小時寄存器重試寫入成功");
+        } else {
+            error(debug_tag, "小時寄存器重試寫入仍然失敗！");
+        }
+    }
 }
 
 /**
@@ -751,7 +764,10 @@ static void check_and_reset_pump_runtime(uint32_t reset_reg, uint32_t sec_reg,
         modbus_write_single_register(hour_reg, 0);
         modbus_write_single_register(day_reg, 0);
 
-        info(debug_tag, "【%s 運轉時間歸零】執行完成", pump_name);
+        // 清除重置命令，避免下次重複觸發
+        modbus_write_single_register(reset_reg, 0);
+
+        info(debug_tag, "【%s 運轉時間歸零】執行完成，重置命令已清除", pump_name);
     }
 }
 
