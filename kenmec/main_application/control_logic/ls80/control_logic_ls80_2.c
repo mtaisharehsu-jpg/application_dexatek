@@ -893,12 +893,28 @@ static void calculate_pump_control(float pid_output, pump_control_output_t *outp
     if (abs_pid_output < CONTROL_DEADZONE) {
         output->active_pumps[primary_idx] = 1;
         output->pump_speeds[primary_idx] = 30.0f;
-        output->active_pumps[secondary_idx] = secondary_enabled ? 1 : 0;
-        output->pump_speeds[secondary_idx] = secondary_enabled ? 30.0f : 0.0f;
 
-        debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(%s)",
-              primary_pump, (secondary_idx + 1),
-              secondary_enabled ? "30%" : "停止");
+        // 檢查非輪值主泵是否為手動模式
+        if (secondary_enabled) {
+            if (secondary_manual_mode == 1) {
+                // 手動模式：讀取手動速度設定值
+                uint16_t manual_speed = modbus_read_input_register(secondary_speed_reg);
+                output->pump_speeds[secondary_idx] = (float)manual_speed;
+                debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(手動 %d%%)",
+                      primary_pump, (secondary_idx + 1), manual_speed);
+            } else {
+                // 自動模式：固定 30%
+                output->pump_speeds[secondary_idx] = 30.0f;
+                debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(30%%)",
+                      primary_pump, (secondary_idx + 1));
+            }
+            output->active_pumps[secondary_idx] = 1;
+        } else {
+            output->pump_speeds[secondary_idx] = 0.0f;
+            output->active_pumps[secondary_idx] = 0;
+            debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(停止)",
+                  primary_pump, (secondary_idx + 1));
+        }
         return;
     }
 
