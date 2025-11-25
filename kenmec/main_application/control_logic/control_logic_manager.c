@@ -6,6 +6,7 @@
 
 #include "ls80/control_logic_ls80.h"
 #include "lx1400/control_logic_lx1400.h"
+#include "ls300d/control_logic_ls300d.h"
 
 /**
  * @file control_logic_manager.c
@@ -128,6 +129,26 @@ int control_logic_manager_set_function_pointer(int machine_type)
             CONTROL_LOGIC_ARRAY[5].init = control_logic_lx1400_6_valve_control_init;
             CONTROL_LOGIC_ARRAY[6].init = control_logic_lx1400_7_2dc_pump_control_init;
             break;
+
+        case CONTROL_LOGIC_MACHINE_TYPE_LS300D:
+            ret = SUCCESS;
+            /* 設置 LS300D 機型的控制函數 */
+            CONTROL_LOGIC_ARRAY[0].func = control_logic_ls300d_1_temperature_control;
+            CONTROL_LOGIC_ARRAY[1].func = control_logic_ls300d_2_pressure_control;
+            CONTROL_LOGIC_ARRAY[2].func = control_logic_ls300d_3_flow_control;
+            CONTROL_LOGIC_ARRAY[3].func = control_logic_ls300d_4_pump_control;
+            CONTROL_LOGIC_ARRAY[4].func = control_logic_ls300d_5_waterpump_control;
+            CONTROL_LOGIC_ARRAY[5].func = control_logic_ls300d_6_valve_control;
+            CONTROL_LOGIC_ARRAY[6].func = control_logic_ls300d_7_2dc_pump_control;
+            /* 設置 LS300D 機型的初始化函數 */
+            CONTROL_LOGIC_ARRAY[0].init = control_logic_ls300d_1_temperature_control_init;
+            CONTROL_LOGIC_ARRAY[1].init = control_logic_ls300d_2_pressure_control_init;
+            CONTROL_LOGIC_ARRAY[2].init = control_logic_ls300d_3_flow_control_init;
+            CONTROL_LOGIC_ARRAY[3].init = control_logic_ls300d_4_pump_control_init;
+            CONTROL_LOGIC_ARRAY[4].init = control_logic_ls300d_5_waterpump_control_init;
+            CONTROL_LOGIC_ARRAY[5].init = control_logic_ls300d_6_valve_control_init;
+            CONTROL_LOGIC_ARRAY[6].init = control_logic_ls300d_7_2dc_pump_control_init;
+            break;
     }
 
     return ret;
@@ -244,7 +265,7 @@ int control_logic_manager_reinit(void)
 int control_logic_manager_init(void)
 {
 
-    debug(tag, "VVVV00111888mmm***********************444222");
+    debug(tag, "VVVV00111888mmm***********************666888");
 
     /* 檢查是否已經初始化 */
     if (_control_logic_manager_initialized) {

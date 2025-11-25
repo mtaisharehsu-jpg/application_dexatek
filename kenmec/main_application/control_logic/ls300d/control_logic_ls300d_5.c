@@ -1,5 +1,5 @@
 /*
- * control_logic_ls80_5.c - LS80 補水泵控制邏輯 (Control Logic 5: Water Pump Control)
+ * control_logic_ls300d_5.c - LS80 補水泵控制邏輯 (Control Logic 5: Water Pump Control)
  *
  * 【功能概述】
  * 本模組實現 CDU 系統的補水泵控制功能,根據水箱液位和壓力自動補水,維持系統水位與壓力穩定。
@@ -690,7 +690,7 @@ static int _register_list_init(void)
     return ret;
 }
 
-int control_logic_ls80_5_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
+int control_logic_ls300d_5_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
 {
     int ret = SUCCESS;
 
@@ -702,7 +702,7 @@ int control_logic_ls80_5_config_get(uint32_t *list_size, control_logic_register_
 }
 
 // 初始化函數
-int control_logic_ls80_5_waterpump_control_init(void) {
+int control_logic_ls300d_5_waterpump_control_init(void) {
     info(tag, "Initializing CDU water pump controller");
     
     // register list init
@@ -743,7 +743,7 @@ int control_logic_ls80_5_waterpump_control_init(void) {
 
 
 // 主控制函數 - 整合到 control_logic_X 框架
-int control_logic_ls80_5_waterpump_control(ControlLogic *ptr) {
+int control_logic_ls300d_5_waterpump_control(ControlLogic *ptr) {
     if (ptr == NULL) return -1;
     
     // check enable

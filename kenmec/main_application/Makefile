@@ -64,6 +64,7 @@ SRCS += $(wildcard $(root)/*.c)
 SRCS += $(wildcard $(root)/control_logic/*.c)
 SRCS += $(wildcard $(root)/control_logic/ls80/*.c)
 SRCS += $(wildcard $(root)/control_logic/lx1400/*.c)
+SRCS += $(wildcard $(root)/control_logic/ls300d/*.c)
 SRCS += $(wildcard $(root)/redfish/src/*.c)
 SRCS += $(wildcard $(root)/misc/*.c)
 

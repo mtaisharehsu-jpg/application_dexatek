@@ -2,33 +2,31 @@
  * control_logic_ls80_5.c - LS80 補水泵控制邏輯 (Control Logic 5: Water Pump Control)
  *
  * 【功能概述】
- * 本模組實現 CDU 系統的補水泵控制功能,根據水箱液位和壓力自動補水,維持系統水位與壓力穩定。
- * 支援手動/自動模式,並提供完整的液位監控、壓力監控、安全保護和故障處理機制。
+ * 本模組實現 CDU 系統的補水泵控制功能,根據水箱液位自動補水,維持系統水位穩定。
+ * 支援手動/自動模式,並提供完整的液位監控、安全保護和故障處理機制。
  *
  * 【控制目標】
  * - 維持水箱液位在高低液位之間
- * - 維持系統壓力在目標壓力以上
- * - 低液位或低壓力觸發補水 → 運行至高液位或目標壓力 → 停止補水
+ * - 低液位觸發補水 → 運行至高液位 → 停止補水
  * - 防止過度補水和缺水
  *
  * 【感測器配置】
- * - 高液位檢測 (REG 411015): DI_3, 1=有液位, 0=無液位
+ * - 高液位檢測 (REG 411112): DI_3, 1=有液位, 0=無液位
  * - //低液位檢測 (REG 411113): DI_4, 1=有液位, 0=無液位
- * - 漏液檢測 (REG 411010): DI_5, 1=漏液, 0=正常
+ * - 漏液檢測 (REG 411114): DI_5, 1=漏液, 0=正常
  * - 系統狀態 (REG 42001): bit7=異常標誌
- * - P5壓力 (REG 42086): AI_B, 0.1 bar 精度
  *
  * 【執行器控制】
- * - 補水泵啟停 (REG 411003): DO, 1=運行, 0=停止
+ * - 補水泵啟停 (REG 411108): DO_7, 1=運行, 0=停止
  *
  * 【控制模式】
  * - 手動模式 (WATER_PUMP_MODE_MANUAL): 僅監控,外部手動控制
- * - 自動模式 (WATER_PUMP_MODE_AUTO): 根據液位和壓力自動補水
+ * - 自動模式 (WATER_PUMP_MODE_AUTO): 根據液位自動補水
  *
  * 【自動補水邏輯】
- * 1. 偵測低液位或低壓力且非高液位 → 啟動延遲 → 開始補水
- * 2. 運行中監控: 高液位到達/目標壓力到達/漏液偵測/系統異常/運行超時
- * 3. 補水完成 → 壓力穩定延遲 (REG_COMPLETE_DELAY) → 進入待機
+ * 1. 偵測低液位且非高液位 → 啟動延遲 → 開始補水
+ * 2. 運行中監控: 高液位到達/漏液偵測/系統異常/運行超時
+ * 3. 補水完成 → 停機延遲 → 進入待機
  * 4. 超時處理: 記錄失敗次數,達到上限停止自動補水
  *
  * 【運行狀態機】
@@ -41,10 +39,10 @@
  * - ERROR: 錯誤狀態
  *
  * 【配置參數】
- * - 目標壓力 (REG 45051): 補水壓力設定 (0.1 bar 精度) - 壓力低於此值時觸發補水
- * - 啟動延遲 (REG 45052): 預設 2.0秒 (0.1s 單位) - 補水泵啟動前的延遲
- * - 最大運行時間 (REG 45053): 預設 300秒 (0.1s 單位) - 補水泵運行超時保護
- * - 完成延遲 (REG 45054): 預設 5.0秒 (0.1s 單位) - 壓力達標後的穩定等待時間
+ * - 目標壓力 (REG 45051): 補水壓力設定 (0.1 bar 精度)
+ * - 啟動延遲 (REG 45052): 預設 2.0秒 (0.1s 單位)
+ * - 最大運行時間 (REG 45053): 預設 300秒 (0.1s 單位)
+ * - 完成延遲 (REG 45054): 預設 5.0秒 (0.1s 單位)
  * - 缺水警告延遲 (REG 45055): 預設 10.0秒 (0.1s 單位)
  * - 最大失敗次數 (REG 45056): 預設 3次
  * - 當前失敗次數 (REG 42801): 補水未滿累計次數
@@ -90,7 +88,7 @@ static uint32_t REG_HIGH_LEVEL = 411015;   // CDU水箱_高液位檢 (0=無液�
 //static uint32_t REG_LOW_LEVEL = 411113;   // CDU水箱_低液位檢 (0=無液位, 1=有液位)
 static uint32_t REG_LEAK_DETECTION = 411010;   // 漏液檢 (0=正常, 1=漏液)
 static uint32_t REG_SYSTEM_STATUS = 42001;    // 機組狀態 (bit8:液位狀態)
-static uint32_t REG_P5_PRESSURE = 42086; // P5壓力 11163, port 1, AI_B
+static uint32_t REG_P5_PRESSURE = 42086; // P3壓力 11163, port 1, AI_B
 
 // 設定參數寄存器
 static uint32_t REG_TARGET_PRESSURE = 45051;    // 補水壓力設定 (bar)
@@ -155,8 +153,7 @@ typedef struct {
     bool leak_detected;           // 漏液檢測
     bool system_normal;           // 系統正常
     uint32_t current_fail_count;  // 當前失敗次數
-    float current_pressure;       // 當前 P5 壓力 (bar)
-
+    
     // 運行時狀態
     uint32_t start_time_ms;       // 開始時間
     uint32_t last_level_check_ms; // 上次液位檢查時間
@@ -268,12 +265,12 @@ static bool read_water_pump_config(water_pump_config_t* config) {
     uint16_t warning_delay_raw = read_holding_register(REG_WARNING_DELAY);
     uint16_t max_fail_count_raw = read_holding_register(REG_MAX_FAIL_COUNT);
     
-    // debug(tag, "pressure_raw = %d (HMI)(%d)", pressure_raw, REG_TARGET_PRESSURE);
-    // debug(tag, "start_delay_raw = %d (HMI)(%d)", start_delay_raw, REG_START_DELAY);
-    // debug(tag, "max_run_time_raw = %d (HMI)(%d)", max_run_time_raw, REG_MAX_RUN_TIME);
-    // debug(tag, "complete_delay_raw = %d (HMI)(%d)", complete_delay_raw, REG_COMPLETE_DELAY);
-    // debug(tag, "warning_delay_raw = %d (HMI)(%d)", warning_delay_raw, REG_WARNING_DELAY);
-    // debug(tag, "max_fail_count_raw = %d (HMI)(%d)", max_fail_count_raw, REG_MAX_FAIL_COUNT);
+    debug(tag, "pressure_raw = %d (HMI)(%d)", pressure_raw, REG_TARGET_PRESSURE);
+    debug(tag, "start_delay_raw = %d (HMI)(%d)", start_delay_raw, REG_START_DELAY);
+    debug(tag, "max_run_time_raw = %d (HMI)(%d)", max_run_time_raw, REG_MAX_RUN_TIME);
+    debug(tag, "complete_delay_raw = %d (HMI)(%d)", complete_delay_raw, REG_COMPLETE_DELAY);
+    debug(tag, "warning_delay_raw = %d (HMI)(%d)", warning_delay_raw, REG_WARNING_DELAY);
+    debug(tag, "max_fail_count_raw = %d (HMI)(%d)", max_fail_count_raw, REG_MAX_FAIL_COUNT);
 
     if (pressure_raw != 0xFFFF) {
         config->target_pressure = (float)pressure_raw / 10.0f; // 0.1bar精度
@@ -301,13 +298,11 @@ static bool read_water_pump_status(water_pump_status_t* status) {
     uint16_t leak_detection = read_holding_register(REG_LEAK_DETECTION);
     uint16_t system_status = read_holding_register(REG_SYSTEM_STATUS);
     uint16_t fail_count = read_holding_register(REG_CURRENT_FAIL_COUNT);
-    uint16_t p5_pressure = read_holding_register(REG_P5_PRESSURE);
-
+    
     //debug(tag, "low_level = %d (DI_4)(%d)", low_level, REG_LOW_LEVEL);
     debug(tag, "leak_detection = %d (DI_5)(%d)", leak_detection, REG_LEAK_DETECTION);
     debug(tag, "system_status = %d (HMI)(%d)", system_status, REG_SYSTEM_STATUS);
     debug(tag, "fail_count = %d (HMI)(%d)", fail_count, REG_CURRENT_FAIL_COUNT);
-    debug(tag, "p5_pressure = %d (AI_B)(%d)", p5_pressure, REG_P5_PRESSURE);
 
     bool success = (pump_control != 0xFFFF) && (high_level != 0xFFFF) &&
                    (leak_detection != 0xFFFF) &&
@@ -320,15 +315,8 @@ static bool read_water_pump_status(water_pump_status_t* status) {
         status->leak_detected = (leak_detection != 0);
         status->system_normal = ((system_status & 0x80) == 0); // bit7: 異常
         status->current_fail_count = (fail_count != 0xFFFF) ? fail_count : 0;
-
-        // 讀取 P5 壓力 (0.1 bar 精度)
-        if (p5_pressure != 0xFFFF) {
-            status->current_pressure = (float)p5_pressure / 10.0f;
-        } else {
-            status->current_pressure = 0.0f;
-        }
     }
-
+    
     return success;
 }
 
@@ -470,32 +458,16 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
     water_pump_status_t* status = &controller->status;
     
     switch (controller->pump_state) {
-        case WATER_PUMP_STATE_IDLE: {
+        case WATER_PUMP_STATE_IDLE:
             // 檢查是否需要開始補水
-            // 觸發條件: (低液位 OR 壓力低於目標) AND 未達高液位
-            bool need_water_fill = false;
-
-            // 條件 1: 低液位觸發
             if (status->low_level && !status->high_level) {
-                need_water_fill = true;
-                debug(tag, "Auto mode: Low level detected, need water fill");
-            }
-
-            // 條件 2: 壓力低於目標觸發
-            if (status->current_pressure < config->target_pressure && !status->high_level) {
-                need_water_fill = true;
-                info(tag, "Auto mode: Pressure %.2f bar < target %.2f bar, need water fill",
-                     status->current_pressure, config->target_pressure);
-            }
-
-            if (need_water_fill) {
                 if (confirm_level_status(status)) {
                     // 液位狀態確認，進行安全檢查
                     if (check_safety_conditions(status)) {
                         if (status->current_fail_count < config->max_fail_count) {
                             start_water_pump(controller);
                         } else {
-                            warn(tag, "Auto mode: Max fail count reached (%d), skipping start",
+                            warn(tag, "Auto mode: Max fail count reached (%d), skipping start", 
                                    config->max_fail_count);
                         }
                     } else {
@@ -507,7 +479,6 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
                 status->level_confirmed = false; // 重置確認狀態
             }
             break;
-        }
             
         case WATER_PUMP_STATE_STARTING:
             // 檢查是否到了啟動時間
@@ -526,29 +497,18 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
                 controller->pump_state = WATER_PUMP_STATE_ERROR;
                 break;
             }
-
+            
             // 檢查是否達到高液位
             if (status->high_level) {
                 if (confirm_level_status(status)) {
                     info(tag, "Auto mode: High level reached, stopping pump");
                     stop_water_pump(controller);
                     controller->pump_state = WATER_PUMP_STATE_COMPLETED;
-                    status->start_time_ms = current_time_ms;
                     status->level_confirmed = false;
                 }
                 break;
             }
-
-            // 檢查是否達到目標壓力
-            if (status->current_pressure >= config->target_pressure) {
-                info(tag, "Auto mode: Target pressure reached (%.2f >= %.2f bar), stopping pump",
-                     status->current_pressure, config->target_pressure);
-                stop_water_pump(controller);
-                controller->pump_state = WATER_PUMP_STATE_COMPLETED;
-                status->start_time_ms = current_time_ms;
-                break;
-            }
-
+            
             // 檢查安全條件
             if (status->leak_detected) {
                 warn(tag, "Auto mode: Leak detected, emergency stop");
@@ -556,23 +516,19 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
                 controller->pump_state = WATER_PUMP_STATE_ERROR;
                 break;
             }
-
+            
             if (!status->system_normal) {
                 warn(tag, "Auto mode: System abnormal, stopping pump");
                 stop_water_pump(controller);
                 controller->pump_state = WATER_PUMP_STATE_ERROR;
                 break;
             }
-
+            
             // 檢查超時
             if ((current_time_ms - status->start_time_ms) >= config->max_run_time_ms) {
                 handle_pump_timeout(controller);
             }
-
-            // 定期記錄壓力變化
-            debug(tag, "Auto mode: Running, pressure = %.2f bar (target: %.2f bar)",
-                  status->current_pressure, config->target_pressure);
-
+            
             status->level_confirmed = false; // 運行中重置確認狀態
             break;
             
@@ -739,8 +695,6 @@ int control_logic_ls80_5_waterpump_control_init(void) {
     info(tag, "CDU water pump controller initialized successfully");
     return 0;
 }
-
-
 
 // 主控制函數 - 整合到 control_logic_X 框架
 int control_logic_ls80_5_waterpump_control(ControlLogic *ptr) {
