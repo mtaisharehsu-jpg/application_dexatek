@@ -91,10 +91,10 @@ sys->emergency_stop
 /*---------------------------------------------------------------------------
                             Defined Constants
  ---------------------------------------------------------------------------*/
-static const char* tag = "ls80_4_pump";
+static const char* tag = "ls300d_4_pump";
 
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_4.json"
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_4.json"
 #define CONFIG_REGISTER_LIST_SIZE 45
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 

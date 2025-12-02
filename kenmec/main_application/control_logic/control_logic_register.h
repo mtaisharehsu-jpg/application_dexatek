@@ -211,6 +211,7 @@
 
 /* 液位檢測暫存器 */
 #define REG_HIGH_LEVEL_STR "HIGH_LEVEL"         // 411112 - 高液位檢測（0=未達, 1=達到）
+#define REG_MID_LEVEL_STR "MID_LEVEL"           // 411016 - 中液位檢測（0=未達, 1=達到）[LS300D專用]
 #define REG_LOW_LEVEL_STR "LOW_LEVEL"           // 411113 - 低液位檢測（0=未達, 1=達到）
 #define REG_LEAK_DETECTION_STR "LEAK_DETECTION" // 411114 - 洩漏檢測（0=正常, 1=洩漏）
 

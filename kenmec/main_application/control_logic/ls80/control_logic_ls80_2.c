@@ -121,9 +121,9 @@ static uint32_t REG_CONTROL_LOGIC_3_ENABLE = 41003; // 控制邏輯3啟用
 static uint32_t REG_AUTO_START_STOP = 45020;        // 自動啟停開關
 
 // ========== 壓力感測器（使用 42xxx 映射地址）==========
-static uint32_t REG_P1_PRESSURE = 42082;  // P1一次側進水壓力（監控）
+static uint32_t REG_P1_PRESSURE = 42082;  // P1一次側進水壓力（監控）42082
 static uint32_t REG_P2_PRESSURE = 42083;  // P2二次側出水壓力（控制）
-static uint32_t REG_P3_PRESSURE = 42084;  // P3一次側出水壓力（監控）
+static uint32_t REG_P3_PRESSURE = 42084;  // P3一次側出水壓力（監控）42084
 static uint32_t REG_P4_PRESSURE = 42085;  // P4二次側進水壓力（控制）
 
 // ========== 控制設定（45xxx）==========

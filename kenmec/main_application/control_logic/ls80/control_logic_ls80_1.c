@@ -14,6 +14,8 @@
  * - T4 (REG 413560): 二次側進水溫度 (0.1°C 精度)
  * - T2 (REG 413556): 二次側出水溫度 (主要控制目標, 0.1°C 精度)
  * - F2 (REG 42063): 二次側流量回饋 (0.1 L/min 精度)
+ * - P1 (REG 42082): 二次側壓力監測
+ * - P3 (REG 42084): 二次側壓力監測
  * - P4 (REG 42085): 二次進水壓力監測
  * - P2 (REG 42083): 二次出水壓力監測
  *
@@ -59,7 +61,7 @@
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_1.json"
-#define CONFIG_REGISTER_LIST_SIZE 19  // 增加 2 個溫度限制寄存器 (46001, 46002)
+#define CONFIG_REGISTER_LIST_SIZE 21  // 增加 P1 壓力感測器 + 2 個溫度限制寄存器 (46001, 46002)
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 static const char *debug_tag = "ls80_1_temp";
@@ -81,7 +83,7 @@ typedef struct {
     float avg_inlet_temp;
     float avg_outlet_temp;
     float flow_rate;           // F2
-    float inlet_pressures[2];  // P12, P13
+    float inlet_pressures[4];  // P1, P2, P3, P4
     time_t timestamp;
 } sensor_data_t;
 
@@ -134,9 +136,9 @@ static uint32_t REG_T4_TEMP = 413560; // T4_IN
 static uint32_t REG_T2_TEMP = 413556; // T2_OUT
 
 static uint32_t REG_F2_FLOW = 42063; // F2流量 11165, port 1, AI_2
-//static uint32_t REG_P1_PRESSURE = 42082; // P1壓力 11061, port 0, AI_A
-//static uint32_t REG_P2_PRESSURE = 42083; // P2壓力 11065, port 0, AI_C
-static uint32_t REG_P4_PRESSURE = 42085; // P4壓力 11067, port 0, AI_D
+static uint32_t REG_P1_PRESSURE = 42082; // P1壓力 11061, port 0, AI_A 42082;
+static uint32_t REG_P2_PRESSURE = 42083; // P2壓力 11065, port 0, AI_C
+static uint32_t REG_P4_PRESSURE = 42085; // P4壓力 11067, port 0, AI_D 42085;
 static uint32_t REG_P3_PRESSURE = 42084; // P3壓力 11063, port 0, AI_B
 
 static uint32_t REG_TARGET_TEMP = 45001; // 目標溫度設定
@@ -230,92 +232,102 @@ static int _register_list_init(void)
     _control_logic_register_list[1].default_address = REG_F2_FLOW,
     _control_logic_register_list[1].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[2].name = REG_P4_PRESSURE_STR;
-    _control_logic_register_list[2].address_ptr = &REG_P4_PRESSURE, 
-    _control_logic_register_list[2].default_address = REG_P4_PRESSURE,
+    _control_logic_register_list[2].name = REG_P1_PRESSURE_STR;
+    _control_logic_register_list[2].address_ptr = &REG_P1_PRESSURE,
+    _control_logic_register_list[2].default_address = REG_P1_PRESSURE,
     _control_logic_register_list[2].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[3].name = REG_P3_PRESSURE_STR;
-    _control_logic_register_list[3].address_ptr = &REG_P3_PRESSURE, 
-    _control_logic_register_list[3].default_address = REG_P3_PRESSURE,
+    _control_logic_register_list[3].name = REG_P4_PRESSURE_STR;
+    _control_logic_register_list[3].address_ptr = &REG_P4_PRESSURE,
+    _control_logic_register_list[3].default_address = REG_P4_PRESSURE,
     _control_logic_register_list[3].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[4].name = REG_TARGET_TEMP_STR;
-    _control_logic_register_list[4].address_ptr = &REG_TARGET_TEMP,
-    _control_logic_register_list[4].default_address = REG_TARGET_TEMP,
-    _control_logic_register_list[4].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    _control_logic_register_list[4].name = REG_P3_PRESSURE_STR;
+    _control_logic_register_list[4].address_ptr = &REG_P3_PRESSURE,
+    _control_logic_register_list[4].default_address = REG_P3_PRESSURE,
+    _control_logic_register_list[4].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[5].name = REG_FLOW_SETPOINT_STR;
-    _control_logic_register_list[5].address_ptr = &REG_FLOW_SETPOINT,
-    _control_logic_register_list[5].default_address = REG_FLOW_SETPOINT,
+    _control_logic_register_list[5].name = REG_TARGET_TEMP_STR;
+    _control_logic_register_list[5].address_ptr = &REG_TARGET_TEMP,
+    _control_logic_register_list[5].default_address = REG_TARGET_TEMP,
     _control_logic_register_list[5].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[6].name = REG_TEMP_CONTROL_MODE_STR;
-    _control_logic_register_list[6].address_ptr = &REG_TEMP_CONTROL_MODE,
-    _control_logic_register_list[6].default_address = REG_TEMP_CONTROL_MODE,
+    _control_logic_register_list[6].name = REG_FLOW_SETPOINT_STR;
+    _control_logic_register_list[6].address_ptr = &REG_FLOW_SETPOINT,
+    _control_logic_register_list[6].default_address = REG_FLOW_SETPOINT,
     _control_logic_register_list[6].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[7].name = REG_VALVE_MANUAL_MODE_STR;
-    _control_logic_register_list[7].address_ptr = &REG_VALVE_MANUAL_MODE,
-    _control_logic_register_list[7].default_address = REG_VALVE_MANUAL_MODE,
+    _control_logic_register_list[7].name = REG_TEMP_CONTROL_MODE_STR;
+    _control_logic_register_list[7].address_ptr = &REG_TEMP_CONTROL_MODE,
+    _control_logic_register_list[7].default_address = REG_TEMP_CONTROL_MODE,
     _control_logic_register_list[7].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[8].name = REG_T4_TEMP_STR;
-    _control_logic_register_list[8].address_ptr = &REG_T4_TEMP,
-    _control_logic_register_list[8].default_address = REG_T4_TEMP,
-    _control_logic_register_list[8].type = CONTROL_LOGIC_REGISTER_READ;
+    _control_logic_register_list[8].name = REG_VALVE_MANUAL_MODE_STR;
+    _control_logic_register_list[8].address_ptr = &REG_VALVE_MANUAL_MODE,
+    _control_logic_register_list[8].default_address = REG_VALVE_MANUAL_MODE,
+    _control_logic_register_list[8].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[9].name = REG_T2_TEMP_STR;
-    _control_logic_register_list[9].address_ptr = &REG_T2_TEMP,
-    _control_logic_register_list[9].default_address = REG_T2_TEMP,
+    _control_logic_register_list[9].name = REG_T4_TEMP_STR;
+    _control_logic_register_list[9].address_ptr = &REG_T4_TEMP,
+    _control_logic_register_list[9].default_address = REG_T4_TEMP,
     _control_logic_register_list[9].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[10].name = REG_VALVE_SETPOINT_STR;
-    _control_logic_register_list[10].address_ptr = &REG_VALVE_OPENING,
-    _control_logic_register_list[10].default_address = REG_VALVE_OPENING,
-    _control_logic_register_list[10].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    _control_logic_register_list[10].name = REG_T2_TEMP_STR;
+    _control_logic_register_list[10].address_ptr = &REG_T2_TEMP,
+    _control_logic_register_list[10].default_address = REG_T2_TEMP,
+    _control_logic_register_list[10].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[11].name = REG_VALVE_SETPOINT_STR;
+    _control_logic_register_list[11].address_ptr = &REG_VALVE_OPENING,
+    _control_logic_register_list[11].default_address = REG_VALVE_OPENING,
+    _control_logic_register_list[11].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     // 環境監測暫存器 - 露點計算
-    _control_logic_register_list[11].name = REG_ENV_TEMP_STR;
-    _control_logic_register_list[11].address_ptr = &REG_ENV_TEMP,
-    _control_logic_register_list[11].default_address = REG_ENV_TEMP,
-    _control_logic_register_list[11].type = CONTROL_LOGIC_REGISTER_READ;
-
-    _control_logic_register_list[12].name = REG_HUMIDITY_STR;
-    _control_logic_register_list[12].address_ptr = &REG_HUMIDITY,
-    _control_logic_register_list[12].default_address = REG_HUMIDITY,
+    _control_logic_register_list[12].name = REG_ENV_TEMP_STR;
+    _control_logic_register_list[12].address_ptr = &REG_ENV_TEMP,
+    _control_logic_register_list[12].default_address = REG_ENV_TEMP,
     _control_logic_register_list[12].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[13].name = REG_DEW_POINT_STR;
-    _control_logic_register_list[13].address_ptr = &REG_DEW_POINT,
-    _control_logic_register_list[13].default_address = REG_DEW_POINT,
-    _control_logic_register_list[13].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    _control_logic_register_list[13].name = REG_HUMIDITY_STR;
+    _control_logic_register_list[13].address_ptr = &REG_HUMIDITY,
+    _control_logic_register_list[13].default_address = REG_HUMIDITY,
+    _control_logic_register_list[13].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[14].name = REG_DP_CORRECT_STR;
-    _control_logic_register_list[14].address_ptr = &REG_DP_CORRECT,
-    _control_logic_register_list[14].default_address = REG_DP_CORRECT,
+    _control_logic_register_list[14].name = REG_DEW_POINT_STR;
+    _control_logic_register_list[14].address_ptr = &REG_DEW_POINT,
+    _control_logic_register_list[14].default_address = REG_DEW_POINT,
     _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[15].name = REG_TEMP_FOLLOW_DEW_POINT_STR;
-    _control_logic_register_list[15].address_ptr = &REG_TEMP_FOLLOW_DEW_POINT,
-    _control_logic_register_list[15].default_address = REG_TEMP_FOLLOW_DEW_POINT,
+    _control_logic_register_list[15].name = REG_DP_CORRECT_STR;
+    _control_logic_register_list[15].address_ptr = &REG_DP_CORRECT,
+    _control_logic_register_list[15].default_address = REG_DP_CORRECT,
     _control_logic_register_list[15].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[16].name = REG_AUTO_START_STOP_STR;
-    _control_logic_register_list[16].address_ptr = &REG_AUTO_START_STOP,
-    _control_logic_register_list[16].default_address = REG_AUTO_START_STOP,
+    _control_logic_register_list[16].name = REG_TEMP_FOLLOW_DEW_POINT_STR;
+    _control_logic_register_list[16].address_ptr = &REG_TEMP_FOLLOW_DEW_POINT,
+    _control_logic_register_list[16].default_address = REG_TEMP_FOLLOW_DEW_POINT,
     _control_logic_register_list[16].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    // 溫度限制暫存器 (HMI 可設定，斷電保持)
-    _control_logic_register_list[17].name = REG_T_HIGH_ALARM_STR;
-    _control_logic_register_list[17].address_ptr = &REG_T_HIGH_ALARM,
-    _control_logic_register_list[17].default_address = REG_T_HIGH_ALARM,
+    _control_logic_register_list[17].name = REG_AUTO_START_STOP_STR;
+    _control_logic_register_list[17].address_ptr = &REG_AUTO_START_STOP,
+    _control_logic_register_list[17].default_address = REG_AUTO_START_STOP,
     _control_logic_register_list[17].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[18].name = REG_T_LOW_ALARM_STR;
-    _control_logic_register_list[18].address_ptr = &REG_T_LOW_ALARM,
-    _control_logic_register_list[18].default_address = REG_T_LOW_ALARM,
+    // 溫度限制暫存器 (HMI 可設定，斷電保持)
+    _control_logic_register_list[18].name = REG_T_HIGH_ALARM_STR;
+    _control_logic_register_list[18].address_ptr = &REG_T_HIGH_ALARM,
+    _control_logic_register_list[18].default_address = REG_T_HIGH_ALARM,
     _control_logic_register_list[18].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[19].name = REG_T_LOW_ALARM_STR;
+    _control_logic_register_list[19].address_ptr = &REG_T_LOW_ALARM,
+    _control_logic_register_list[19].default_address = REG_T_LOW_ALARM,
+    _control_logic_register_list[19].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[20].name = REG_P2_PRESSURE_STR;
+    _control_logic_register_list[20].address_ptr = &REG_P2_PRESSURE,
+    _control_logic_register_list[20].default_address = REG_P2_PRESSURE,
+    _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ;
 
     // try to load register array from file
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
@@ -453,6 +465,10 @@ int control_logic_ls80_1_temperature_control(ControlLogic *ptr) {
     debug(debug_tag, "溫度數據 - 進水平均: %.1f°C, 出水平均: %.1f°C, 流量: %.1f L/min",
           sensor_data.avg_inlet_temp, sensor_data.avg_outlet_temp, sensor_data.flow_rate);
 
+    debug(debug_tag, "壓力數據 - P1: %.1f Bar, P2: %.1f Bar, P3: %.1f Bar, P4: %.1f Bar",
+          sensor_data.inlet_pressures[0], sensor_data.inlet_pressures[1],
+          sensor_data.inlet_pressures[2], sensor_data.inlet_pressures[3]);
+
     // 【步驟3】安全檢查 (暫時註釋,可根據需求啟用)
     // 檢查項目: 溫度超限/流量過低/進出水溫差異常
     // safety_status = perform_safety_checks(&sensor_data);
@@ -507,6 +523,10 @@ int control_logic_ls80_1_temperature_control(ControlLogic *ptr) {
  * - T4: 進水溫度 (0.1°C 精度, REG 413560)
  * - T2: 出水溫度 (0.1°C 精度, REG 413556, 主要控制目標)
  * - F2: 流量回饋 (0.1 L/min 精度, REG 42063)
+ * - P1: 壓力 (0.1 Bar 精度, REG 42082)
+ * - P2: 壓力 (0.1 Bar 精度, REG 42083)
+ * - P3: 壓力 (0.1 Bar 精度, REG 42084)
+ * - P4: 壓力 (0.1 Bar 精度, REG 42085)
  *
  * @param data 感測器數據結構指標
  * @return 0=成功, -1=參數錯誤
@@ -543,10 +563,43 @@ static int read_sensor_data(sensor_data_t *data) {
         warn(debug_tag, "F2流量讀取失敗");
         data->flow_rate = 0.0f;
     }
-    
+
+    // 讀取壓力數據 (0.1 Bar 精度)
+    temp_raw = modbus_read_input_register(REG_P1_PRESSURE);
+    if (temp_raw >= 0) {
+        data->inlet_pressures[0] = temp_raw / 10.0f;  // P1
+    } else {
+        warn(debug_tag, "P1壓力讀取失敗");
+        data->inlet_pressures[0] = 0.0f;
+    }
+
+    temp_raw = modbus_read_input_register(REG_P2_PRESSURE);
+    if (temp_raw >= 0) {
+        data->inlet_pressures[1] = temp_raw / 10.0f;  // P2
+    } else {
+        warn(debug_tag, "P2壓力讀取失敗");
+        data->inlet_pressures[1] = 0.0f;
+    }
+
+    temp_raw = modbus_read_input_register(REG_P3_PRESSURE);
+    if (temp_raw >= 0) {
+        data->inlet_pressures[2] = temp_raw / 10.0f;  // P3
+    } else {
+        warn(debug_tag, "P3壓力讀取失敗");
+        data->inlet_pressures[2] = 0.0f;
+    }
+
+    temp_raw = modbus_read_input_register(REG_P4_PRESSURE);
+    if (temp_raw >= 0) {
+        data->inlet_pressures[3] = temp_raw / 10.0f;  // P4
+    } else {
+        warn(debug_tag, "P4壓力讀取失敗");
+        data->inlet_pressures[3] = 0.0f;
+    }
+
     // 設定時間戳
     data->timestamp = time(NULL);
-    
+
     return 0;
 }
 

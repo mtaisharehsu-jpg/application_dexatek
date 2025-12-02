@@ -36,9 +36,9 @@
 // 閥門控制寄存器定義 (依據 CDU 控制系統 Modbus 寄存器定義表)
 // ========================================================================================
 
-static const char* tag = "ls80_6_valve";
+static const char* tag = "ls300d_6_valve";
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_6.json"
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_6.json"
 #define CONFIG_REGISTER_LIST_SIZE 15
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 

@@ -1,25 +1,31 @@
 /*
- * control_logic_ls300d_5.c - LS80 補水泵控制邏輯 (Control Logic 5: Water Pump Control)
+ * control_logic_ls300d_5.c - LS300D 補水泵控制邏輯 (Control Logic 5: Water Pump Control)
+ *
+ * 【LS300D 特點】
+ * LS300D 機種使用「中液位停止」策略,與 LS80 的「高液位停止」不同。
+ * 中液位停止可以避免過度補水,同時保留高液位作為溢流保護。
  *
  * 【功能概述】
  * 本模組實現 CDU 系統的補水泵控制功能,根據水箱液位和壓力自動補水,維持系統水位與壓力穩定。
  * 支援手動/自動模式,並提供完整的液位監控、壓力監控、安全保護和故障處理機制。
  *
  * 【控制目標】
- * - 維持水箱液位在高低液位之間
+ * - 維持水箱液位在中液位附近 (LS300D 特性)
  * - 維持系統壓力在目標壓力以上
- * - 低液位或低壓力觸發補水 → 運行至高液位或目標壓力 → 停止補水
+ * - 低液位或低壓力觸發補水 → 運行至中液位或目標壓力 → 停止補水
+ * - 高液位作為溢流保護,到達高液位時強制停止
  * - 防止過度補水和缺水
  *
- * 【感測器配置】
- * - 高液位檢測 (REG 411015): DI_3, 1=有液位, 0=無液位
- * - //低液位檢測 (REG 411113): DI_4, 1=有液位, 0=無液位
- * - 漏液檢測 (REG 411010): DI_5, 1=漏液, 0=正常
+ * 【感測器配置 - LS300D】
+ * - 高液位檢測 (REG 411015): DI_3, 1=有液位, 0=無液位 (溢流保護)
+ * - 中液位檢測 (REG 411016): DI_4, 1=有液位, 0=無液位 (正常停止點)
+ * - 低液位檢測 (REG 411114): DI_5, 1=有液位, 0=無液位 (啟動點)
+ * - 漏液檢測 (REG 411013): DI_6, 1=漏液, 0=正常
  * - 系統狀態 (REG 42001): bit7=異常標誌
- * - P5壓力 (REG 42086): AI_B, 0.1 bar 精度
+ * - P5壓力 (REG 42090): AI_B, 0.1 bar 精度
  *
  * 【執行器控制】
- * - 補水泵啟停 (REG 411003): DO, 1=運行, 0=停止
+ * - 補水泵啟停 (REG 411007): DO, 1=運行, 0=停止
  *
  * 【控制模式】
  * - 手動模式 (WATER_PUMP_MODE_MANUAL): 僅監控,外部手動控制
@@ -71,27 +77,28 @@
 // cdu_water_pump_control.c
 
 // ========================================================================================
-// CDU 補水泵寄存器定義 (依據 CDU 控制系統 Modbus 寄存器定義表)
+// LS300D 補水泵寄存器定義 (依據 CDU 控制系統 Modbus 寄存器定義表)
 // ========================================================================================
 
-static const char* tag = "ls80_5_water_pump";
+static const char* tag = "ls300d_5_waterpump";
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_5.json"
-#define CONFIG_REGISTER_LIST_SIZE 15
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_5.json"
+#define CONFIG_REGISTER_LIST_SIZE 16  // 增加 1 個寄存器 (MID_LEVEL)
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 // 補水泵控制寄存器
 static uint32_t REG_CONTROL_LOGIC_5_ENABLE = 41005; // 控制邏輯5啟用
 
-static uint32_t REG_WATER_PUMP_CONTROL = 411003;   // 補水泵啟停控制 (0=Stop, 1=Run)
+static uint32_t REG_WATER_PUMP_CONTROL = 411007;   // 補水泵啟停控制 (0=Stop, 1=Run)
 
-// 液位檢測寄存器
-static uint32_t REG_HIGH_LEVEL = 411015;   // CDU水箱_高液位檢 (0=無液位, 1=有液位)
-//static uint32_t REG_LOW_LEVEL = 411113;   // CDU水箱_低液位檢 (0=無液位, 1=有液位)
-static uint32_t REG_LEAK_DETECTION = 411010;   // 漏液檢 (0=正常, 1=漏液)
+// 液位檢測寄存器 (LS300D 三液位設計)
+static uint32_t REG_HIGH_LEVEL = 411015;   // CDU水箱_高液位檢 (0=無液位, 1=有液位, 溢流保護)
+static uint32_t REG_MID_LEVEL = 411016;    // CDU水箱_中液位檢 (0=無液位, 1=有液位, 正常停止點)
+static uint32_t REG_LOW_LEVEL = 411114;    // CDU水箱_低液位檢 (0=無液位, 1=有液位, 啟動點)
+static uint32_t REG_LEAK_DETECTION = 411013;   // 漏液檢 (0=正常, 1=漏液)
 static uint32_t REG_SYSTEM_STATUS = 42001;    // 機組狀態 (bit8:液位狀態)
-static uint32_t REG_P5_PRESSURE = 42086; // P5壓力 11163, port 1, AI_B
-
+static uint32_t REG_P5A_PRESSURE = 42090; // P5_A_water_box_壓力 
+//static uint32_t REG_P5B_PRESSURE = 42091; // P5_B_water_box_壓力
 // 設定參數寄存器
 static uint32_t REG_TARGET_PRESSURE = 45051;    // 補水壓力設定 (bar)
 static uint32_t REG_START_DELAY = 45052;    // 補水啟動延遲 (0.1s)
@@ -147,11 +154,12 @@ typedef struct {
     uint32_t max_fail_count;      // 最大失敗次數
 } water_pump_config_t;
 
-// 補水泵狀態
+// 補水泵狀態 (LS300D 三液位設計)
 typedef struct {
     bool is_running;              // 補水泵是否運行
-    bool high_level;              // 高液位狀態
-    bool low_level;               // 低液位狀態
+    bool high_level;              // 高液位狀態 (溢流保護)
+    bool mid_level;               // 中液位狀態 (正常停止點, LS300D 特性)
+    bool low_level;               // 低液位狀態 (啟動點)
     bool leak_detected;           // 漏液檢測
     bool system_normal;           // 系統正常
     uint32_t current_fail_count;  // 當前失敗次數
@@ -293,30 +301,35 @@ static bool read_water_pump_config(water_pump_config_t* config) {
     return true;
 }
 
-// 讀取補水泵狀態
+// 讀取補水泵狀態 (LS300D 三液位版本)
 static bool read_water_pump_status(water_pump_status_t* status) {
     uint16_t pump_control = read_holding_register(REG_WATER_PUMP_CONTROL);
     uint16_t high_level = read_holding_register(REG_HIGH_LEVEL);
-    //uint16_t low_level = read_holding_register(REG_LOW_LEVEL);
+    uint16_t mid_level = read_holding_register(REG_MID_LEVEL);
+    uint16_t low_level = read_holding_register(REG_LOW_LEVEL);
     uint16_t leak_detection = read_holding_register(REG_LEAK_DETECTION);
     uint16_t system_status = read_holding_register(REG_SYSTEM_STATUS);
     uint16_t fail_count = read_holding_register(REG_CURRENT_FAIL_COUNT);
-    uint16_t p5_pressure = read_holding_register(REG_P5_PRESSURE);
+    uint16_t p5_pressure = read_holding_register(REG_P5A_PRESSURE);
 
-    //debug(tag, "low_level = %d (DI_4)(%d)", low_level, REG_LOW_LEVEL);
-    debug(tag, "leak_detection = %d (DI_5)(%d)", leak_detection, REG_LEAK_DETECTION);
-    debug(tag, "system_status = %d (HMI)(%d)", system_status, REG_SYSTEM_STATUS);
-    debug(tag, "fail_count = %d (HMI)(%d)", fail_count, REG_CURRENT_FAIL_COUNT);
-    debug(tag, "p5_pressure = %d (AI_B)(%d)", p5_pressure, REG_P5_PRESSURE);
+    debug(tag, "high_level = %d (DI_3)(REG %d)", high_level, REG_HIGH_LEVEL);
+    debug(tag, "mid_level = %d (DI_4)(REG %d)", mid_level, REG_MID_LEVEL);
+    debug(tag, "low_level = %d (DI_5)(REG %d)", low_level, REG_LOW_LEVEL);
+    debug(tag, "leak_detection = %d (DI_6)(REG %d)", leak_detection, REG_LEAK_DETECTION);
+    debug(tag, "system_status = %d (HMI)(REG %d)", system_status, REG_SYSTEM_STATUS);
+    debug(tag, "fail_count = %d (HMI)(REG %d)", fail_count, REG_CURRENT_FAIL_COUNT);
+    debug(tag, "p5_pressure = %d (AI_B)(REG %d)", p5_pressure, REG_P5A_PRESSURE);
 
     bool success = (pump_control != 0xFFFF) && (high_level != 0xFFFF) &&
+                   (mid_level != 0xFFFF) && (low_level != 0xFFFF) &&
                    (leak_detection != 0xFFFF) &&
                    (system_status != 0xFFFF);
 
     if (success) {
         status->is_running = (pump_control != 0);
         status->high_level = (high_level != 0);
-        status->low_level = false; // REG_LOW_LEVEL not used in this version
+        status->mid_level = (mid_level != 0);
+        status->low_level = (low_level != 0);
         status->leak_detected = (leak_detection != 0);
         status->system_normal = ((system_status & 0x80) == 0); // bit7: 異常
         status->current_fail_count = (fail_count != 0xFFFF) ? fail_count : 0;
@@ -334,7 +347,7 @@ static bool read_water_pump_status(water_pump_status_t* status) {
 
 // 寫入泵浦控制指令
 static bool write_pump_control(bool enable) {
-    uint16_t cmd_value = enable ? 1 : 0;
+    uint16_t cmd_value = enable ? 0 : 1;  // 反轉：0=運行, 1=停止
     bool result = write_holding_register(REG_WATER_PUMP_CONTROL, cmd_value);
     
     if (result) {
@@ -355,26 +368,32 @@ static bool write_fail_count(uint32_t count) {
 // 安全檢查和控制邏輯
 // ========================================================================================
 
-// 安全條件檢查
+// 安全條件檢查 (LS300D 版本)
 static bool check_safety_conditions(water_pump_status_t* status) {
     // 檢查系統狀態
     if (!status->system_normal) {
         debug(tag, "Safety check failed: System abnormal");
         return false;
     }
-    
+
     // 檢查漏液
     if (status->leak_detected) {
         debug(tag, "Safety check failed: Leak detected");
         return false;
     }
-    
-    // 檢查高液位（已經滿水就不需要補水）
+
+    // 檢查高液位 (溢流保護 - 最高優先級)
     if (status->high_level) {
-        debug(tag, "Safety check failed: High level already reached");
+        warn(tag, "Safety check failed: High level reached (overflow protection)");
         return false;
     }
-    
+
+    // 檢查中液位 (LS300D 正常停止點)
+    if (status->mid_level) {
+        debug(tag, "Safety check failed: Mid level already reached (LS300D target)");
+        return false;
+    }
+
     return true;
 }
 
@@ -442,47 +461,51 @@ static void handle_pump_timeout(water_pump_controller_t* controller) {
 // 控制邏輯實現
 // ========================================================================================
 
-// 手動控制模式
+// 手動控制模式 (LS300D 版本)
 static void execute_manual_control(water_pump_controller_t* controller) {
     // 手動模式下主要進行監控，實際控制由外部 HMI 或 SCADA 系統進行
     water_pump_status_t* status = &controller->status;
-    
+
     // 監控補水泵狀態
     if (status->is_running) {
         // 檢查是否需要停止（安全檢查）
         if (status->leak_detected) {
             warn(tag, "Manual mode: Leak detected - recommend stopping pump");
         }
-        
+
         if (status->high_level) {
-            info(tag, "Manual mode: High level reached - recommend stopping pump");
+            warn(tag, "Manual mode: High level reached (overflow) - recommend stopping pump immediately");
         }
-        
+
+        if (status->mid_level) {
+            info(tag, "Manual mode: Mid level reached (LS300D target) - recommend stopping pump");
+        }
+
         debug(tag, "Manual mode: Pump running - monitoring");
     } else {
         debug(tag, "Manual mode: Pump stopped - monitoring");
     }
 }
 
-// 自動控制模式
+// 自動控制模式 (LS300D 版本)
 static void execute_auto_control(water_pump_controller_t* controller, uint32_t current_time_ms) {
     water_pump_config_t* config = &controller->config;
     water_pump_status_t* status = &controller->status;
-    
+
     switch (controller->pump_state) {
         case WATER_PUMP_STATE_IDLE: {
             // 檢查是否需要開始補水
-            // 觸發條件: (低液位 OR 壓力低於目標) AND 未達高液位
+            // LS300D 觸發條件: (低液位 OR 壓力低於目標) AND 未達中液位 AND 未達高液位
             bool need_water_fill = false;
 
-            // 條件 1: 低液位觸發
-            if (status->low_level && !status->high_level) {
+            // 條件 1: 低液位觸發 (無低液位且未達中液位)
+            if (!status->low_level && !status->mid_level && !status->high_level) {
                 need_water_fill = true;
-                debug(tag, "Auto mode: Low level detected, need water fill");
+                debug(tag, "Auto mode: Low level detected (no water), need water fill");
             }
 
-            // 條件 2: 壓力低於目標觸發
-            if (status->current_pressure < config->target_pressure && !status->high_level) {
+            // 條件 2: 壓力低於目標觸發 (未達中液位和高液位)
+            if (status->current_pressure < config->target_pressure && !status->mid_level && !status->high_level) {
                 need_water_fill = true;
                 info(tag, "Auto mode: Pressure %.2f bar < target %.2f bar, need water fill",
                      status->current_pressure, config->target_pressure);
@@ -527,10 +550,18 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
                 break;
             }
 
-            // 檢查是否達到高液位
+            // 檢查高液位 (溢流保護 - 最高優先級,立即停止)
             if (status->high_level) {
+                warn(tag, "Auto mode: High level reached (OVERFLOW PROTECTION), emergency stop!");
+                stop_water_pump(controller);
+                controller->pump_state = WATER_PUMP_STATE_ERROR;
+                break;
+            }
+
+            // 檢查是否達到中液位 (LS300D 正常停止點)
+            if (status->mid_level) {
                 if (confirm_level_status(status)) {
-                    info(tag, "Auto mode: High level reached, stopping pump");
+                    info(tag, "Auto mode: Mid level reached (LS300D target), stopping pump");
                     stop_water_pump(controller);
                     controller->pump_state = WATER_PUMP_STATE_COMPLETED;
                     status->start_time_ms = current_time_ms;
@@ -632,55 +663,65 @@ static int _register_list_init(void)
     _control_logic_register_list[2].default_address = REG_HIGH_LEVEL;
     _control_logic_register_list[2].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[3].name = REG_P5_PRESSURE_STR;
-    _control_logic_register_list[3].address_ptr = &REG_P5_PRESSURE, 
-    _control_logic_register_list[3].default_address = REG_P5_PRESSURE,
+    _control_logic_register_list[3].name = "MID_LEVEL";  // LS300D 中液位
+    _control_logic_register_list[3].address_ptr = &REG_MID_LEVEL;
+    _control_logic_register_list[3].default_address = REG_MID_LEVEL;
     _control_logic_register_list[3].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[4].name = REG_LEAK_DETECTION_STR;
-    _control_logic_register_list[4].address_ptr = &REG_LEAK_DETECTION;
-    _control_logic_register_list[4].default_address = REG_LEAK_DETECTION;
+    _control_logic_register_list[4].name = "LOW_LEVEL";  // LS300D 低液位
+    _control_logic_register_list[4].address_ptr = &REG_LOW_LEVEL;
+    _control_logic_register_list[4].default_address = REG_LOW_LEVEL;
     _control_logic_register_list[4].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[5].name = REG_SYSTEM_STATUS_STR;
-    _control_logic_register_list[5].address_ptr = &REG_SYSTEM_STATUS;
-    _control_logic_register_list[5].default_address = REG_SYSTEM_STATUS;
+    _control_logic_register_list[5].name = REG_P5_PRESSURE_STR;
+    _control_logic_register_list[5].address_ptr = &REG_P5A_PRESSURE;
+    _control_logic_register_list[5].default_address = REG_P5A_PRESSURE;
     _control_logic_register_list[5].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[6].name = REG_TARGET_PRESSURE_STR;
-    _control_logic_register_list[6].address_ptr = &REG_TARGET_PRESSURE;
-    _control_logic_register_list[6].default_address = REG_TARGET_PRESSURE;
-    _control_logic_register_list[6].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    _control_logic_register_list[6].name = REG_LEAK_DETECTION_STR;
+    _control_logic_register_list[6].address_ptr = &REG_LEAK_DETECTION;
+    _control_logic_register_list[6].default_address = REG_LEAK_DETECTION;
+    _control_logic_register_list[6].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[7].name = REG_START_DELAY_STR;
-    _control_logic_register_list[7].address_ptr = &REG_START_DELAY;
-    _control_logic_register_list[7].default_address = REG_START_DELAY;
-    _control_logic_register_list[7].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    _control_logic_register_list[7].name = REG_SYSTEM_STATUS_STR;
+    _control_logic_register_list[7].address_ptr = &REG_SYSTEM_STATUS;
+    _control_logic_register_list[7].default_address = REG_SYSTEM_STATUS;
+    _control_logic_register_list[7].type = CONTROL_LOGIC_REGISTER_READ;
 
-    _control_logic_register_list[8].name = REG_MAX_RUN_TIME_STR;
-    _control_logic_register_list[8].address_ptr = &REG_MAX_RUN_TIME;
-    _control_logic_register_list[8].default_address = REG_MAX_RUN_TIME;
+    _control_logic_register_list[8].name = REG_TARGET_PRESSURE_STR;
+    _control_logic_register_list[8].address_ptr = &REG_TARGET_PRESSURE;
+    _control_logic_register_list[8].default_address = REG_TARGET_PRESSURE;
     _control_logic_register_list[8].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[9].name = REG_COMPLETE_DELAY_STR;
-    _control_logic_register_list[9].address_ptr = &REG_COMPLETE_DELAY;
-    _control_logic_register_list[9].default_address = REG_COMPLETE_DELAY;
+    _control_logic_register_list[9].name = REG_START_DELAY_STR;
+    _control_logic_register_list[9].address_ptr = &REG_START_DELAY;
+    _control_logic_register_list[9].default_address = REG_START_DELAY;
     _control_logic_register_list[9].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[10].name = REG_WARNING_DELAY_STR;
-    _control_logic_register_list[10].address_ptr = &REG_WARNING_DELAY;
-    _control_logic_register_list[10].default_address = REG_WARNING_DELAY;
+    _control_logic_register_list[10].name = REG_MAX_RUN_TIME_STR;
+    _control_logic_register_list[10].address_ptr = &REG_MAX_RUN_TIME;
+    _control_logic_register_list[10].default_address = REG_MAX_RUN_TIME;
     _control_logic_register_list[10].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[11].name = REG_MAX_FAIL_COUNT_STR;
-    _control_logic_register_list[11].address_ptr = &REG_MAX_FAIL_COUNT;
-    _control_logic_register_list[11].default_address = REG_MAX_FAIL_COUNT;
+    _control_logic_register_list[11].name = REG_COMPLETE_DELAY_STR;
+    _control_logic_register_list[11].address_ptr = &REG_COMPLETE_DELAY;
+    _control_logic_register_list[11].default_address = REG_COMPLETE_DELAY;
     _control_logic_register_list[11].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[12].name = REG_CURRENT_FAIL_COUNT_STR;
-    _control_logic_register_list[12].address_ptr = &REG_CURRENT_FAIL_COUNT;
-    _control_logic_register_list[12].default_address = REG_CURRENT_FAIL_COUNT;
-    _control_logic_register_list[12].type = CONTROL_LOGIC_REGISTER_READ;
+    _control_logic_register_list[12].name = REG_WARNING_DELAY_STR;
+    _control_logic_register_list[12].address_ptr = &REG_WARNING_DELAY;
+    _control_logic_register_list[12].default_address = REG_WARNING_DELAY;
+    _control_logic_register_list[12].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[13].name = REG_MAX_FAIL_COUNT_STR;
+    _control_logic_register_list[13].address_ptr = &REG_MAX_FAIL_COUNT;
+    _control_logic_register_list[13].default_address = REG_MAX_FAIL_COUNT;
+    _control_logic_register_list[13].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[14].name = REG_CURRENT_FAIL_COUNT_STR;
+    _control_logic_register_list[14].address_ptr = &REG_CURRENT_FAIL_COUNT;
+    _control_logic_register_list[14].default_address = REG_CURRENT_FAIL_COUNT;
+    _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ;
 
     // try to load register array from file
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
@@ -733,6 +774,13 @@ int control_logic_ls300d_5_waterpump_control_init(void) {
          _water_pump_controller.config.start_delay_ms,
          _water_pump_controller.config.max_run_time_ms,
          _water_pump_controller.config.complete_delay_ms);
+
+    // 確保補水泵初始狀態為停止 (LS300D: 1=停止)
+    info(tag, "Setting water pump to initial STOP state (REG 411007 = 1)");
+    if (!write_holding_register(REG_WATER_PUMP_CONTROL, 1)) {
+        error(tag, "Failed to set initial water pump state");
+        return -1;
+    }
 
     _water_pump_controller.system_initialized = true;
 

@@ -33,9 +33,9 @@
 #include "dexatek/main_application/include/application_common.h"
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
-static const char* debug_tag = "ls80_7_2dc_pump";
+static const char* debug_tag = "ls300d_7_2dc_pump";
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_7.json"
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_7.json"
 #define CONFIG_REGISTER_LIST_SIZE 40  // 擴大以容納運轉時間寄存器
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 

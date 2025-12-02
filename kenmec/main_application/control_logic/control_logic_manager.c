@@ -265,7 +265,7 @@ int control_logic_manager_reinit(void)
 int control_logic_manager_init(void)
 {
 
-    debug(tag, "VVVV00111888mmm***********************666888");
+    debug(tag, "VVVV00111888mmm***********************888333");
 
     /* 檢查是否已經初始化 */
     if (_control_logic_manager_initialized) {

@@ -61,14 +61,14 @@
 /*---------------------------------------------------------------------------
                             Defined Constants
  ---------------------------------------------------------------------------*/
-static const char *debug_tag = "ls80_3_flow";
+static const char *debug_tag = "ls300d_3_flow";
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_3.json"
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_3.json"
 #define CONFIG_REGISTER_LIST_SIZE 25
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 // 顯示時間持久化配置
-#define DISPLAY_TIME_PERSIST_FILE "/usrdata/ls80_3_display_time.json"
+#define DISPLAY_TIME_PERSIST_FILE "/usrdata/ls300d_3_display_time.json"
 #define DISPLAY_TIME_SAVE_INTERVAL 300  // 每 5 分鐘保存一次 (秒)
 static time_t last_display_time_save = 0;  // 上次保存時間戳
 

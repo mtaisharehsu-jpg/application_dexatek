@@ -1,21 +1,31 @@
 /*
- * control_logic_ls300d_1.c - LS80 溫度控制邏輯 (Control Logic 1: Temperature Control)
+ * control_logic_ls300d_1.c - LS300D 溫度控制邏輯 (Control Logic 1: Temperature Control)
+ *
+ * 【LS300D 特點】
+ * LS300D 機種在 LS80 基礎上增加了雙備援感測器設計,提供更高的系統可靠性。
+ * 所有溫度感測器 (T1-T4) 都採用 A/B 雙備援配置,實現容錯運行。
  *
  * 【功能概述】
- * 本模組實現 CDU 系統的溫度控制功能,通過 PID 演算法維持冷卻水出水溫度穩定,
- * 結合自適應參數調整和多泵浦協調策略,確保系統在不同負載下的精確溫控。
+ * 本模組實現 LS300D 系統的溫度控制功能,通過 PID 演算法維持冷卻水出水溫度穩定,
+ * 結合自適應參數調整、雙備援感測器容錯和多泵浦協調策略,確保系統高可靠性運行。
  *
  * 【控制目標】
  * - 維持二次側出水溫度在設定值 (T_set)
  * - 預設目標溫度: 25.0°C
  * - 溫度容差: ±0.5°C
  *
- * 【感測器配置】
- * - T4 (REG 413560): 二次側進水溫度 (0.1°C 精度)
- * - T2 (REG 413556): 二次側出水溫度 (主要控制目標, 0.1°C 精度)
+ * 【感測器配置 - 雙備援設計】
+ * - T1a/T1b (REG 412554/412556): 溫度感測器1 (A/B雙備援, 0.1°C 精度)
+ * - T2a/T2b (REG 412558/412560): 溫度感測器2 (A/B雙備援, 0.1°C 精度)
+ * - T3a/T3b (REG 412562/412564): 溫度感測器3 (A/B雙備援, 0.1°C 精度)
+ * - T4a/T4b (REG 412566/412568): 溫度感測器4 (A/B雙備援, 0.1°C 精度)
  * - F2 (REG 42063): 二次側流量回饋 (0.1 L/min 精度)
- * - P4 (REG 42085): 二次進水壓力監測
- * - P2 (REG 42083): 二次出水壓力監測
+ *
+ * 【雙備援容錯機制】
+ * - 正常運行: 使用平均值 (Ta + Tb) / 2
+ * - 單一失效: 使用正常感測器值 + 發出警報
+ * - 雙備援失效: 錯誤狀態,停止自動控制
+ * - 差異檢測閾值: |Ta - Tb| > 2.0°C 時發出警告
  *
  * 【執行器控制】
  * - Pump1/2: 泵浦速度 0-100% (通過寄存器 45015/45016 控制)
@@ -58,11 +68,11 @@
 
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_1.json"
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_1.json"
 #define CONFIG_REGISTER_LIST_SIZE 19  // 增加 2 個溫度限制寄存器 (46001, 46002)
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
-static const char *debug_tag = "ls80_1_temp";
+static const char *debug_tag = "ls300d_1_temp";
 
 typedef enum {
     TEMP_CONTROL_MODE_MANUAL = 0,
@@ -75,13 +85,37 @@ typedef enum {
     SAFETY_STATUS_EMERGENCY = 2
 } safety_status_t;
 
+/**
+ * @brief 雙備援感測器狀態
+ */
+typedef enum {
+    SENSOR_STATUS_OK = 0,        // 雙備援正常運行
+    SENSOR_STATUS_DEGRADED = 1,  // 單一失效,降級運行
+    SENSOR_STATUS_FAILED = 2     // 雙備援全部失效
+} sensor_status_t;
+
+/**
+ * @brief 雙備援溫度感測器資料結構
+ */
 typedef struct {
-    float inlet_temps[2];      // T11, T12
-    float outlet_temps[2];     // T17, T18
-    float avg_inlet_temp;
-    float avg_outlet_temp;
-    float flow_rate;           // F2
-    float inlet_pressures[2];  // P12, P13
+    float value_a;           // A 感測器讀值
+    float value_b;           // B 感測器讀值
+    float average;           // 平均值 (Ta + Tb) / 2
+    bool a_valid;            // A 感測器有效性
+    bool b_valid;            // B 感測器有效性
+    sensor_status_t status;  // 感測器狀態
+    bool diff_warning;       // 差異過大警告
+} redundant_temp_sensor_t;
+
+/**
+ * @brief LS300D 感測器資料 (含雙備援)
+ */
+typedef struct {
+    redundant_temp_sensor_t t1;  // T1a/T1b
+    redundant_temp_sensor_t t2;  // T2a/T2b
+    redundant_temp_sensor_t t3;  // T3a/T3b
+    redundant_temp_sensor_t t4;  // T4a/T4b
+    float flow_rate;             // F2 流量
     time_t timestamp;
 } sensor_data_t;
 
@@ -130,14 +164,25 @@ static uint32_t REG_HUMIDITY = 42022;    // 環境濕度
 static uint32_t REG_DEW_POINT = 42024;   // 露點溫度輸出
 static uint32_t REG_DP_CORRECT = 45004;  // 露點校正值
 
-static uint32_t REG_T4_TEMP = 413560; // T4_IN
-static uint32_t REG_T2_TEMP = 413556; // T2_OUT
+// LS300D 雙備援溫度感測器寄存器
+static uint32_t REG_T1A_TEMP = 412554;  // T1a 溫度
+static uint32_t REG_T1B_TEMP = 412556;  // T1b 溫度
+static uint32_t REG_T2A_TEMP = 412558;  // T2a 溫度
+static uint32_t REG_T2B_TEMP = 412560;  // T2b 溫度
+static uint32_t REG_T3A_TEMP = 412562;  // T3a 溫度
+static uint32_t REG_T3B_TEMP = 412564;  // T3b 溫度
+static uint32_t REG_T4A_TEMP = 412566;  // T4a 溫度
+static uint32_t REG_T4B_TEMP = 412568;  // T4b 溫度
 
-static uint32_t REG_F2_FLOW = 42063; // F2流量 11165, port 1, AI_2
-//static uint32_t REG_P1_PRESSURE = 42082; // P1壓力 11061, port 0, AI_A
-//static uint32_t REG_P2_PRESSURE = 42083; // P2壓力 11065, port 0, AI_C
-static uint32_t REG_P4_PRESSURE = 42085; // P4壓力 11067, port 0, AI_D
-static uint32_t REG_P3_PRESSURE = 42084; // P3壓力 11063, port 0, AI_B
+// 為了與 register list 兼容,定義 T2/T4 映射到 A 感測器 (用於配置系統)
+static uint32_t REG_T2_TEMP = 412558;  // T2 = T2a (用於 register list)
+static uint32_t REG_T4_TEMP = 412566;  // T4 = T4a (用於 register list)
+
+// 壓力感測器寄存器 (暫時保留 LS80 的定義,後續會更新為雙備援)
+static uint32_t REG_P3_PRESSURE = 42084;  // P3 壓力
+static uint32_t REG_P4_PRESSURE = 42085;  // P4 壓力
+
+static uint32_t REG_F2_FLOW = 42063;    // F2流量
 
 static uint32_t REG_TARGET_TEMP = 45001; // 目標溫度設定
 static uint32_t REG_FLOW_SETPOINT = 45003; // 流量設定
@@ -162,6 +207,7 @@ static uint32_t REG_T_LOW_ALARM = 46002;   // 最低溫度限制 (預設 10.0°C
 #define TARGET_TEMP_DEFAULT    25.0f   // 預設目標溫度
 
 // 函數宣告
+static redundant_temp_sensor_t read_redundant_temp_sensor(uint32_t reg_a, uint32_t reg_b, const char *name);
 static int read_sensor_data(sensor_data_t *data);
 // static safety_status_t perform_safety_checks(const sensor_data_t *data);  // 暫時未使用
 // static void emergency_shutdown(void);  // 暫時未使用
@@ -441,17 +487,18 @@ int control_logic_ls300d_1_temperature_control(ControlLogic *ptr) {
         return 0;  // 未啟用則直接返回,不執行控制
     }
 
-    info(debug_tag, "=== CDU溫度控制系統執行 (v1.1) ===");
+    info(debug_tag, "=== CDU溫度控制系統執行 (LS300D 雙備援版本) ===");
 
     // 【步驟2】讀取感測器數據
-    // 包括 T4(進水溫), T2(出水溫), F2(流量), P4/P13(壓力)
+    // 包括 T1-T4 雙備援溫度感測器, F2(流量)
     if (read_sensor_data(&sensor_data) != 0) {
-        error(debug_tag, "讀取感測器數據失敗");
+        error(debug_tag, "讀取感測器數據失敗或雙備援失效");
         return -1;
     }
 
-    debug(debug_tag, "溫度數據 - 進水平均: %.1f°C, 出水平均: %.1f°C, 流量: %.1f L/min",
-          sensor_data.avg_inlet_temp, sensor_data.avg_outlet_temp, sensor_data.flow_rate);
+    // T4 = 進水溫度, T2 = 出水溫度 (主要控制目標)
+    debug(debug_tag, "溫度數據 - T4進水: %.1f°C, T2出水: %.1f°C, 流量: %.1f L/min",
+          sensor_data.t4.average, sensor_data.t2.average, sensor_data.flow_rate);
 
     // 【步驟3】安全檢查 (暫時註釋,可根據需求啟用)
     // 檢查項目: 溫度超限/流量過低/進出水溫差異常
@@ -498,75 +545,152 @@ int control_logic_ls300d_1_temperature_control(ControlLogic *ptr) {
 }
 
 /**
- * 讀取所有感測器數據
+ * @brief 讀取雙備援溫度感測器
  *
  * 【功能說明】
- * 從 Modbus 寄存器讀取溫度、流量、壓力等感測器數據,並計算平均值。
+ * 讀取 A/B 兩個備援感測器的值,並實現容錯機制:
+ * - 雙備援正常: 使用平均值 (Ta + Tb) / 2
+ * - 單一失效: 使用正常感測器值 + 發出警報
+ * - 雙備援失效: 錯誤狀態
+ * - 差異檢測: |Ta - Tb| > 2.0°C 時發出警告
+ *
+ * @param reg_a A 感測器寄存器地址
+ * @param reg_b B 感測器寄存器地址
+ * @param name 感測器名稱 (用於日誌)
+ * @return 雙備援溫度感測器資料結構
+ */
+static redundant_temp_sensor_t read_redundant_temp_sensor(uint32_t reg_a, uint32_t reg_b, const char *name) {
+    redundant_temp_sensor_t sensor = {0};
+    int raw_a, raw_b;
+    const float TEMP_DIFF_THRESHOLD = 2.0f;  // 2.0°C 差異閾值
+
+    // 讀取 A 感測器
+    raw_a = modbus_read_input_register(reg_a);
+    if (raw_a >= 0 && raw_a != 0xFFFF) {
+        sensor.value_a = raw_a / 10.0f;
+        sensor.a_valid = true;
+    } else {
+        sensor.value_a = 0.0f;
+        sensor.a_valid = false;
+        warn(debug_tag, "%sA 感測器讀取失敗 (reg=%u)", name, reg_a);
+    }
+
+    // 讀取 B 感測器
+    raw_b = modbus_read_input_register(reg_b);
+    if (raw_b >= 0 && raw_b != 0xFFFF) {
+        sensor.value_b = raw_b / 10.0f;
+        sensor.b_valid = true;
+    } else {
+        sensor.value_b = 0.0f;
+        sensor.b_valid = false;
+        warn(debug_tag, "%sB 感測器讀取失敗 (reg=%u)", name, reg_b);
+    }
+
+    // 判斷感測器狀態並計算平均值
+    if (sensor.a_valid && sensor.b_valid) {
+        // 雙備援正常運行
+        sensor.average = (sensor.value_a + sensor.value_b) / 2.0f;
+        sensor.status = SENSOR_STATUS_OK;
+
+        // 檢測差異是否過大
+        float diff = fabsf(sensor.value_a - sensor.value_b);
+        if (diff > TEMP_DIFF_THRESHOLD) {
+            sensor.diff_warning = true;
+            warn(debug_tag, "%s 感測器差異過大: %.1f°C (A=%.1f°C, B=%.1f°C)",
+                 name, diff, sensor.value_a, sensor.value_b);
+        } else {
+            sensor.diff_warning = false;
+        }
+    } else if (sensor.a_valid || sensor.b_valid) {
+        // 單一失效,降級運行
+        sensor.average = sensor.a_valid ? sensor.value_a : sensor.value_b;
+        sensor.status = SENSOR_STATUS_DEGRADED;
+        sensor.diff_warning = false;
+        warn(debug_tag, "%s 降級運行: 使用 %s 感測器 (%.1f°C)",
+             name, sensor.a_valid ? "A" : "B", sensor.average);
+    } else {
+        // 雙備援全部失效
+        sensor.average = 0.0f;
+        sensor.status = SENSOR_STATUS_FAILED;
+        sensor.diff_warning = false;
+        error(debug_tag, "%s 雙備援全部失效!", name);
+    }
+
+    return sensor;
+}
+
+/**
+ * 讀取所有感測器數據 (LS300D 雙備援版本)
+ *
+ * 【功能說明】
+ * 從 Modbus 寄存器讀取雙備援溫度感測器、流量等數據。
  *
  * 【讀取內容】
- * - T4: 進水溫度 (0.1°C 精度, REG 413560)
- * - T2: 出水溫度 (0.1°C 精度, REG 413556, 主要控制目標)
- * - F2: 流量回饋 (0.1 L/min 精度, REG 42063)
+ * - T1a/T1b: 溫度感測器1 (雙備援, 0.1°C 精度)
+ * - T2a/T2b: 溫度感測器2 (雙備援, 0.1°C 精度)
+ * - T3a/T3b: 溫度感測器3 (雙備援, 0.1°C 精度)
+ * - T4a/T4b: 溫度感測器4 (雙備援, 0.1°C 精度)
+ * - F2: 流量回饋 (0.1 L/min 精度)
  *
  * @param data 感測器數據結構指標
- * @return 0=成功, -1=參數錯誤
+ * @return 0=成功, -1=參數錯誤或感測器失效
  */
 static int read_sensor_data(sensor_data_t *data) {
-    int temp_raw;
-    
-    // 讀取溫度數據 (0.1°C精度)
-    temp_raw = modbus_read_input_register(REG_T4_TEMP);
-    if (temp_raw >= 0) {
-        data->inlet_temps[0] = temp_raw / 10.0f;
-    } else {
-        warn(debug_tag, "T4溫度讀取失敗");
-        data->inlet_temps[0] = 0.0f;
+    if (data == NULL) {
+        error(debug_tag, "read_sensor_data: NULL 指標錯誤");
+        return -1;
     }
-    
-    temp_raw = modbus_read_input_register(REG_T2_TEMP);
-    if (temp_raw >= 0) {
-        data->outlet_temps[0] = temp_raw / 10.0f;
-    } else {
-        warn(debug_tag, "T2溫度讀取失敗");
-        data->outlet_temps[0] = 0.0f;
+
+    // 讀取雙備援溫度感測器
+    data->t1 = read_redundant_temp_sensor(REG_T1A_TEMP, REG_T1B_TEMP, "T1");
+    data->t2 = read_redundant_temp_sensor(REG_T2A_TEMP, REG_T2B_TEMP, "T2");
+    data->t3 = read_redundant_temp_sensor(REG_T3A_TEMP, REG_T3B_TEMP, "T3");
+    data->t4 = read_redundant_temp_sensor(REG_T4A_TEMP, REG_T4B_TEMP, "T4");
+
+    // 檢查是否有感測器完全失效
+    if (data->t1.status == SENSOR_STATUS_FAILED ||
+        data->t2.status == SENSOR_STATUS_FAILED ||
+        data->t3.status == SENSOR_STATUS_FAILED ||
+        data->t4.status == SENSOR_STATUS_FAILED) {
+        error(debug_tag, "溫度感測器嚴重失效,停止自動控制");
+        return -1;
     }
-    
-    // 計算平均溫度
-    data->avg_inlet_temp = (data->inlet_temps[0] + data->inlet_temps[1]);
-    data->avg_outlet_temp = (data->outlet_temps[0] + data->outlet_temps[1]);
-    
+
     // 讀取流量數據 (0.1 L/min精度)
-    temp_raw = modbus_read_input_register(REG_F2_FLOW);
-    if (temp_raw >= 0) {
-        data->flow_rate = temp_raw / 10.0f;
+    int flow_raw = modbus_read_input_register(REG_F2_FLOW);
+    if (flow_raw >= 0 && flow_raw != 0xFFFF) {
+        data->flow_rate = flow_raw / 10.0f;
     } else {
-        warn(debug_tag, "F2流量讀取失敗");
+        warn(debug_tag, "F2 流量讀取失敗");
         data->flow_rate = 0.0f;
     }
-    
+
     // 設定時間戳
     data->timestamp = time(NULL);
-    
+
+    debug(debug_tag, "感測器讀取完成 - T1: %.1f°C, T2: %.1f°C, T3: %.1f°C, T4: %.1f°C, F2: %.1f L/min",
+          data->t1.average, data->t2.average, data->t3.average, data->t4.average, data->flow_rate);
+
     return 0;
 }
 
 /**
- * 安全檢查邏輯 (已啟用，使用 HMI 可設定的溫度限制)
+ * 安全檢查邏輯 (LS300D 雙備援版本，使用 HMI 可設定的溫度限制)
  */
 static safety_status_t perform_safety_checks(const sensor_data_t *data) {
     // 從寄存器讀取溫度限制值 (HMI 可設定)
     uint16_t t_high_alarm = modbus_read_input_register(REG_T_HIGH_ALARM);
     uint16_t t_low_alarm = modbus_read_input_register(REG_T_LOW_ALARM);
 
-    // 緊急停機檢查 - 最高溫度
-    if (data->avg_outlet_temp > (float)t_high_alarm) {
-        error(debug_tag, "出水溫度過高: %.1f°C > %d°C", data->avg_outlet_temp, t_high_alarm);
+    // 緊急停機檢查 - 最高溫度 (使用 T2 出水溫度)
+    if (data->t2.average > (float)t_high_alarm) {
+        error(debug_tag, "T2出水溫度過高: %.1f°C > %d°C", data->t2.average, t_high_alarm);
         return SAFETY_STATUS_EMERGENCY;
     }
 
-    // 緊急停機檢查 - 最低溫度
-    if (data->avg_outlet_temp < (float)t_low_alarm) {
-        error(debug_tag, "出水溫度過低: %.1f°C < %d°C", data->avg_outlet_temp, t_low_alarm);
+    // 緊急停機檢查 - 最低溫度 (使用 T2 出水溫度)
+    if (data->t2.average < (float)t_low_alarm) {
+        error(debug_tag, "T2出水溫度過低: %.1f°C < %d°C", data->t2.average, t_low_alarm);
         return SAFETY_STATUS_EMERGENCY;
     }
 
@@ -576,8 +700,8 @@ static safety_status_t perform_safety_checks(const sensor_data_t *data) {
     }
 
     // 警告條件檢查
-    if (data->avg_outlet_temp > TARGET_TEMP_DEFAULT + 5.0f) {
-        warn(debug_tag, "溫度偏高警告: %.1f°C", data->avg_outlet_temp);
+    if (data->t2.average > TARGET_TEMP_DEFAULT + 5.0f) {
+        warn(debug_tag, "溫度偏高警告: %.1f°C", data->t2.average);
         return SAFETY_STATUS_WARNING;
     }
 
@@ -586,10 +710,11 @@ static safety_status_t perform_safety_checks(const sensor_data_t *data) {
         return SAFETY_STATUS_WARNING;
     }
 
-    // 進出水溫差異常檢查
-    float temp_diff = fabs(data->avg_inlet_temp - data->avg_outlet_temp);
+    // 進出水溫差異常檢查 (T4 進水, T2 出水)
+    float temp_diff = fabs(data->t4.average - data->t2.average);
     if (temp_diff > 10.0f) {
-        warn(debug_tag, "進出水溫差過大: %.1f°C", temp_diff);
+        warn(debug_tag, "進出水溫差過大: %.1f°C (T4進水: %.1f°C, T2出水: %.1f°C)",
+             temp_diff, data->t4.average, data->t2.average);
         return SAFETY_STATUS_WARNING;
     }
 
@@ -743,11 +868,11 @@ static int execute_automatic_control_mode(const sensor_data_t *data) {
     // 套用溫度跟隨露點功能（在 PID 計算前調整目標溫度）
     apply_dew_point_tracking(&target_temp);
 
-    // PID控制計算
-    pid_output = calculate_pid_output(&temperature_pid, target_temp, data->avg_outlet_temp);
+    // PID控制計算 (使用 T2 出水溫度作為控制目標)
+    pid_output = calculate_pid_output(&temperature_pid, target_temp, data->t2.average);
 
     // 自適應參數調整
-    adjust_pid_parameters(&temperature_pid, target_temp - data->avg_outlet_temp);
+    adjust_pid_parameters(&temperature_pid, target_temp - data->t2.average);
 
     // 計算比例閥開度
     control_output.valve_opening = calculate_valve_opening(pid_output, data);
@@ -763,13 +888,13 @@ static int execute_automatic_control_mode(const sensor_data_t *data) {
     if (valve_manual_mode == 0) {
         // 自動模式: 使用 PID 計算結果設定比例閥開度
         modbus_write_single_register(REG_VALVE_OPENING, valve_value);
-        info(debug_tag, "自動控制 - PID輸出: %.1f%%, 當前溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度: %d%%",
-             pid_output, data->avg_outlet_temp, target_temp, valve_value);
+        info(debug_tag, "自動控制 - PID輸出: %.1f%%, T2出水溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度: %d%%",
+             pid_output, data->t2.average, target_temp, valve_value);
     } else {
         // 手動模式: 不寫入 PID 計算結果,保持 HMI 手動設定值
         uint16_t current_opening = modbus_read_input_register(REG_VALVE_OPENING);
-        info(debug_tag, "自動控制(比例閥手動) - PID輸出: %.1f%%, 當前溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度(手動): %d%%",
-             pid_output, data->avg_outlet_temp, target_temp, current_opening);
+        info(debug_tag, "自動控制(比例閥手動) - PID輸出: %.1f%%, T2出水溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度(手動): %d%%",
+             pid_output, data->t2.average, target_temp, current_opening);
     }
     
     return 0;
@@ -782,20 +907,20 @@ static int execute_automatic_control_mode(const sensor_data_t *data) {
  */
 static float calculate_valve_opening(float pid_output, const sensor_data_t *data) {
     float valve_opening = pid_output;
-    
+
     // // 流量補償
     // if (data->flow_rate < MIN_FLOW_RATE) {
     //     valve_opening = fminf(valve_opening + 10.0f, 100.0f);
     // } else if (data->flow_rate > MIN_FLOW_RATE * 1.5f) {
     //     valve_opening = fmaxf(valve_opening - 5.0f, 10.0f);
     // }
-    
-    // 溫度快速響應
-    float temp_error = fabs(data->avg_outlet_temp - TARGET_TEMP_DEFAULT);
+
+    // 溫度快速響應 (使用 T2 出水溫度)
+    float temp_error = fabs(data->t2.average - TARGET_TEMP_DEFAULT);
     if (temp_error > 2.0f) {
         valve_opening = fminf(valve_opening * 1.2f, 100.0f);
     }
-    
+
     return valve_opening;
 }
 
