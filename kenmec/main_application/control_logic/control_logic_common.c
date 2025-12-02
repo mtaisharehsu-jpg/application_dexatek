@@ -27,6 +27,7 @@
 
 #include "kenmec/main_application/control_logic/ls80/control_logic_ls80.h"
 #include "kenmec/main_application/control_logic/lx1400/control_logic_lx1400.h"
+#include "kenmec/main_application/control_logic/ls300d/control_logic_ls300d.h"
 
 /*---------------------------------------------------------------------------
                             Defined Constants
@@ -606,6 +607,42 @@ int control_logic_api_data_append_to_json(uint8_t logic_id, cJSON *json_root)
             break;
         }
 
+        case CONTROL_LOGIC_MACHINE_TYPE_LS300D: {
+            switch (logic_id) {
+                case 1:
+                    control_logic_ls300d_1_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_data_append_to_json(json_root, register_list, list_size);
+                    break;
+                case 2:
+                    control_logic_ls300d_2_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_data_append_to_json(json_root, register_list, list_size);
+                    break;
+                case 3:
+                    control_logic_ls300d_3_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_data_append_to_json(json_root, register_list, list_size);
+                    break;
+                case 4:
+                    control_logic_ls300d_4_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_data_append_to_json(json_root, register_list, list_size);
+                    break;
+                case 5:
+                    control_logic_ls300d_5_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_data_append_to_json(json_root, register_list, list_size);
+                    break;
+                case 6:
+                    control_logic_ls300d_6_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_data_append_to_json(json_root, register_list, list_size);
+                    break;
+                case 7:
+                    control_logic_ls300d_7_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_data_append_to_json(json_root, register_list, list_size);
+                    break;
+                default:
+                    break;
+            }
+            break;
+        }
+
         default:
             break;
     }
@@ -690,6 +727,41 @@ int control_logic_api_write_by_json(uint8_t logic_id, const char *jsonPayload, u
                     break;
                 case 7:
                     control_logic_lx1400_7_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
+                    break;
+                default:
+                    break;
+            }
+            break;
+        }
+        case CONTROL_LOGIC_MACHINE_TYPE_LS300D: {
+            switch (logic_id) {
+                case 1:
+                    control_logic_ls300d_1_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
+                    break;
+                case 2:
+                    control_logic_ls300d_2_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
+                    break;
+                case 3:
+                    control_logic_ls300d_3_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
+                    break;
+                case 4:
+                    control_logic_ls300d_4_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
+                    break;
+                case 5:
+                    control_logic_ls300d_5_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
+                    break;
+                case 6:
+                    control_logic_ls300d_6_config_get(&list_size, &register_list, &file_path);
+                    ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
+                    break;
+                case 7:
+                    control_logic_ls300d_7_config_get(&list_size, &register_list, &file_path);
                     ret = control_logic_write_by_json(jsonPayload, timeout_ms, file_path, register_list, list_size);
                     break;
                 default:

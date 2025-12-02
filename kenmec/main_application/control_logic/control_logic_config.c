@@ -1373,6 +1373,10 @@ control_logic_machine_type_t control_logic_config_get_machine_type(void)
         else if (strncmp(_system_configs->machine_type, "LX1400", sizeof(_system_configs->machine_type)) == 0) {
             machine_type = CONTROL_LOGIC_MACHINE_TYPE_LX1400;
         }
+        /* 檢查是否為 LS300D 機型 */
+        else if (strncmp(_system_configs->machine_type, "LS300D", sizeof(_system_configs->machine_type)) == 0) {
+            machine_type = CONTROL_LOGIC_MACHINE_TYPE_LS300D;
+        }
     }
 
     return machine_type;
