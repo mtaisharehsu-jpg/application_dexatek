@@ -169,6 +169,9 @@ static uint32_t REG_PUMP2_AUTO_MODE_MINUTES = 42173;  // Pump2 AUTO 模式累計
 #define DISPLAY_TIME_PERSIST_FILE "/usrdata/ls80_2_display_time.json"
 #define DISPLAY_TIME_SAVE_INTERVAL 300  // 每 5 分鐘保存一次 (秒)
 
+// 主泵狀態持久化配置
+#define PRIMARY_PUMP_PERSIST_FILE "/usrdata/ls80_2_primary_pump.json"
+
 /*---------------------------------------------------------------------------
                                 Variables
  ---------------------------------------------------------------------------*/
@@ -275,6 +278,8 @@ static void update_display_auto_time(void);
 static void check_and_switch_primary_pump(void);
 static int save_display_time_to_file(void);
 static int restore_display_time_from_file(void);
+static int save_primary_pump_state_to_file(void);
+static int restore_primary_pump_state_from_file(void);
 
 /*---------------------------------------------------------------------------
                             Implementation
@@ -668,6 +673,31 @@ int control_logic_ls80_2_pressure_control_init(void)
     }
 
     info(debug_tag, "【診斷】壓力限制初始化完成");
+
+    // ========== 恢復顯示時間 (斷電保持機制) ==========
+    info(debug_tag, "【診斷】開始恢復顯示時間...");
+
+    if (restore_display_time_from_file() == SUCCESS) {
+        info(debug_tag, "【開機初始化】顯示時間恢復成功 ✓");
+    } else {
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
+        info(debug_tag, "【開機初始化】顯示時間初始化為 0:00 ✓");
+    }
+
+    info(debug_tag, "【診斷】顯示時間初始化完成");
+
+    // ========== 恢復主泵選擇 (斷電保持機制) ==========
+    info(debug_tag, "【診斷】開始恢復主泵選擇...");
+
+    if (restore_primary_pump_state_from_file() == SUCCESS) {
+        info(debug_tag, "【開機初始化】主泵選擇恢復成功 ✓");
+    } else {
+        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, 1);
+        info(debug_tag, "【開機初始化】主泵選擇初始化為 Pump1 ✓");
+    }
+
+    info(debug_tag, "【診斷】主泵選擇初始化完成");
 
     return ret;
 }
@@ -1266,6 +1296,119 @@ static int restore_display_time_from_file(void) {
 }
 
 /**
+ * 保存主泵狀態到文件 (斷電保持)
+ *
+ * 功能:
+ * - 將當前主泵選擇 (REG_PRIMARY_PUMP_INDEX) 保存到 JSON 文件
+ * - 只保存有效值 (1 或 2)
+ * - 使用 fsync 確保數據寫入磁盤
+ *
+ * @return SUCCESS: 保存成功, FAILURE: 保存失敗
+ */
+static int save_primary_pump_state_to_file(void) {
+    uint16_t primary_pump = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
+
+    // 只保存有效值
+    if (primary_pump != 1 && primary_pump != 2) {
+        warn(debug_tag, "【斷電保持】主泵選擇值無效: %d, 不保存", primary_pump);
+        return FAILURE;
+    }
+
+    // 建立 JSON 物件
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        error(debug_tag, "【斷電保持】建立 JSON 物件失敗");
+        return FAILURE;
+    }
+
+    cJSON_AddNumberToObject(root, "primary_pump", primary_pump);
+
+    // 轉換為字符串
+    char *json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+
+    if (json_str == NULL) {
+        error(debug_tag, "【斷電保持】JSON 序列化失敗");
+        return FAILURE;
+    }
+
+    // 寫入文件
+    FILE *fp = fopen(PRIMARY_PUMP_PERSIST_FILE, "w");
+    if (fp == NULL) {
+        error(debug_tag, "【斷電保持】無法打開文件寫入: %s", PRIMARY_PUMP_PERSIST_FILE);
+        free(json_str);
+        return FAILURE;
+    }
+
+    fprintf(fp, "%s", json_str);
+    fflush(fp);
+    fsync(fileno(fp));
+    fclose(fp);
+    free(json_str);
+
+    return SUCCESS;
+}
+
+/**
+ * 從文件恢復主泵狀態 (斷電保持)
+ *
+ * 功能:
+ * - 從 JSON 文件讀取主泵選擇狀態
+ * - 驗證數據有效性 (必須為 1 或 2)
+ * - 寫回到 REG_PRIMARY_PUMP_INDEX 寄存器
+ *
+ * @return SUCCESS: 恢復成功, FAILURE: 文件不存在或數據無效
+ */
+static int restore_primary_pump_state_from_file(void) {
+    // 讀取整個文件
+    long json_len = 0;
+    char *json_text = control_logic_read_entire_file(PRIMARY_PUMP_PERSIST_FILE, &json_len);
+
+    if (json_text == NULL) {
+        info(debug_tag, "【斷電保持】主泵狀態持久化文件不存在,使用預設值 Pump1");
+        return FAILURE;
+    }
+
+    // 解析 JSON
+    cJSON *root = cJSON_Parse(json_text);
+    free(json_text);
+
+    if (root == NULL) {
+        error(debug_tag, "【斷電保持】解析 JSON 失敗,文件可能已損壞");
+        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
+        return FAILURE;
+    }
+
+    // 讀取主泵選擇
+    cJSON *primary_pump_item = cJSON_GetObjectItemCaseSensitive(root, "primary_pump");
+
+    if (!cJSON_IsNumber(primary_pump_item)) {
+        error(debug_tag, "【斷電保持】JSON 格式錯誤,缺少 primary_pump 字段");
+        cJSON_Delete(root);
+        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
+        return FAILURE;
+    }
+
+    uint16_t primary_pump = (uint16_t)primary_pump_item->valueint;
+
+    // 數據驗證
+    if (primary_pump != 1 && primary_pump != 2) {
+        error(debug_tag, "【斷電保持】恢復的主泵選擇無效: %d (應為 1 或 2)", primary_pump);
+        cJSON_Delete(root);
+        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
+        return FAILURE;
+    }
+
+    // 寫回寄存器
+    modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, primary_pump);
+
+    info(debug_tag, "【斷電保持】成功恢復主泵選擇: Pump%d", primary_pump);
+
+    cJSON_Delete(root);
+    return SUCCESS;
+}
+
+/**
  * 更新顯示時間（參照 ls80_3.c）
  * 功能:
  * - 偵測主泵變化,變化時自動歸零顯示時間
@@ -1408,6 +1551,9 @@ static void check_and_switch_primary_pump(void) {
         // 切換主泵 (1 ↔ 2)
         uint16_t new_primary = (current_primary == 1) ? 2 : 1;
         modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, new_primary);
+
+        // ========== 保存主泵狀態到文件 (斷電保持) ==========
+        save_primary_pump_state_to_file();
 
         // 歸零顯示時間寄存器
         modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
