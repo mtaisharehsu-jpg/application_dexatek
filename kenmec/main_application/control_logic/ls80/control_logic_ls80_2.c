@@ -695,6 +695,10 @@ int control_logic_ls80_2_pressure_control_init(void)
     } else {
         modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, 1);
         info(debug_tag, "【開機初始化】主泵選擇初始化為 Pump1 ✓");
+
+        // ===== 立即創建基線文件 =====
+        save_primary_pump_state_to_file();
+        info(debug_tag, "【斷電保持】創建主泵狀態基線文件");
     }
 
     info(debug_tag, "【診斷】主泵選擇初始化完成");
@@ -899,8 +903,8 @@ static void calculate_pump_control(float pid_output, pump_control_output_t *outp
     // === 讀取主泵選擇 ===
     uint16_t primary_pump = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
     if (primary_pump != 1 && primary_pump != 2) {
-        primary_pump = 1;  // 預設 Pump1
-        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, primary_pump);
+        primary_pump = 1;  // 只修改局部變數,不寫回寄存器
+        // 寄存器由初始化函數設定,這裡不應該修改
     }
 
     int primary_idx = primary_pump - 1;      // 主泵索引 (0 或 1)
@@ -1447,6 +1451,11 @@ static void update_display_auto_time(void) {
         last_primary_pump_index = current_primary;
 
         info(debug_tag, "主泵顯示時間已歸零 (45046=0, 45047=0)");
+
+        // ========== 保存 HMI 手動修改的主泵狀態到文件 (斷電保持) ==========
+        save_primary_pump_state_to_file();
+        info(debug_tag, "【斷電保持】HMI 手動切換主泵,已保存新狀態: Pump%d", current_primary);
+
         return;  // 本次循環不進行累積,避免包含過渡時的時間
     }
 
