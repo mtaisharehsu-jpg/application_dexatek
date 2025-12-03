@@ -1311,14 +1311,14 @@ static int save_primary_pump_state_to_file(void) {
     // 只保存有效值
     if (primary_pump != 1 && primary_pump != 2) {
         warn(debug_tag, "【斷電保持】主泵選擇值無效: %d, 不保存", primary_pump);
-        return FAILURE;
+        return FAIL;
     }
 
     // 建立 JSON 物件
     cJSON *root = cJSON_CreateObject();
     if (root == NULL) {
         error(debug_tag, "【斷電保持】建立 JSON 物件失敗");
-        return FAILURE;
+        return FAIL;
     }
 
     cJSON_AddNumberToObject(root, "primary_pump", primary_pump);
@@ -1329,7 +1329,7 @@ static int save_primary_pump_state_to_file(void) {
 
     if (json_str == NULL) {
         error(debug_tag, "【斷電保持】JSON 序列化失敗");
-        return FAILURE;
+        return FAIL;
     }
 
     // 寫入文件
@@ -1337,7 +1337,7 @@ static int save_primary_pump_state_to_file(void) {
     if (fp == NULL) {
         error(debug_tag, "【斷電保持】無法打開文件寫入: %s", PRIMARY_PUMP_PERSIST_FILE);
         free(json_str);
-        return FAILURE;
+        return FAIL;
     }
 
     fprintf(fp, "%s", json_str);
@@ -1366,7 +1366,7 @@ static int restore_primary_pump_state_from_file(void) {
 
     if (json_text == NULL) {
         info(debug_tag, "【斷電保持】主泵狀態持久化文件不存在,使用預設值 Pump1");
-        return FAILURE;
+        return FAIL;
     }
 
     // 解析 JSON
@@ -1376,7 +1376,7 @@ static int restore_primary_pump_state_from_file(void) {
     if (root == NULL) {
         error(debug_tag, "【斷電保持】解析 JSON 失敗,文件可能已損壞");
         remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
-        return FAILURE;
+        return FAIL;
     }
 
     // 讀取主泵選擇
@@ -1386,7 +1386,7 @@ static int restore_primary_pump_state_from_file(void) {
         error(debug_tag, "【斷電保持】JSON 格式錯誤,缺少 primary_pump 字段");
         cJSON_Delete(root);
         remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
-        return FAILURE;
+        return FAIL;
     }
 
     uint16_t primary_pump = (uint16_t)primary_pump_item->valueint;
@@ -1396,7 +1396,7 @@ static int restore_primary_pump_state_from_file(void) {
         error(debug_tag, "【斷電保持】恢復的主泵選擇無效: %d (應為 1 或 2)", primary_pump);
         cJSON_Delete(root);
         remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
-        return FAILURE;
+        return FAIL;
     }
 
     // 寫回寄存器
