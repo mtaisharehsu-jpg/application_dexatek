@@ -14,14 +14,14 @@
  * 【功能概述】
  * ============================================================================
  * 本模組實現 CDU 系統的壓力差控制功能，通過 PID 演算法維持冷卻水系統壓力差穩定
- * 支援 (P4-P2)→Pset 追蹤模式，並提供2泵協調控制策略，確保壓力差精確跟隨設定值
+ * 支援 (P2-P4)→Pset 追蹤模式，並提供2泵協調控制策略，確保壓力差精確跟隨設定值
  *
  * ============================================================================
  * 【控制目標】
  * ============================================================================
- * - 維持二次側壓力差 (P4進水 - P2出水) 追蹤設定值 Pset
+ * - 維持二次側壓力差 (P2出水 - P4進水 ) 追蹤設定值 Pset
  * - 預設目標壓差：REG_PRESSURE_SETPOINT (45002)
- * - 追蹤模式：(P4-P2)→Pset
+ * - 追蹤模式：(P2-P4)→Pset
  *
  * ============================================================================
  * 【與原版差異】
@@ -32,7 +32,7 @@
  * - 泵速寫入：speed × 10 × 10 = mV (0-10000mV)
  *
  * 新版 control_logic_ls80_2_m_v01.c：
- * - 計算 P4-P2 壓力差（二次側）
+ * - 計算 P2-P4 壓力差（二次側）
  * - 使用 42xxx 映射地址（參照 ls80_3.c 流量控制）
  * - 泵速寫入：直接寫入 0-100%（簡化方式）
  * - 新增：P1 和 P3 壓力監控顯示
@@ -187,7 +187,7 @@ typedef struct {
     float P2_secondary_outlet;    // P2二次側出水壓力（控制）
     float P3_primary_outlet;      // P3一次側出水壓力（監控）
     float P4_secondary_inlet;     // P4二次側進水壓力（控制）
-    float pressure_differential;  // 壓力差 (P4 - P2)
+    float pressure_differential;  // 壓力差 (P2 - P4)
     time_t timestamp;
 } pressure_sensor_data_t;
 
@@ -619,6 +619,10 @@ int control_logic_ls80_2_pressure_control_init(void)
 
     _register_list_init();
 
+    // ========== 初始化 PID 控制器 (參照 ls80_3.c) ==========
+    reset_pressure_pid_controller(&pressure_pid);
+    info(debug_tag, "PID 控制器已初始化並重置");
+
     // ========== 初始化壓力限制值 (斷電保持機制) ==========
     info(debug_tag, "【診斷】開始初始化壓力限制值...");
 
@@ -825,7 +829,7 @@ static int read_pressure_sensor_data(pressure_sensor_data_t *data) {
     // 設定時間戳
     data->timestamp = time(NULL);
 
-    debug(debug_tag, "壓力數據 - P1: %.2f, P2: %.2f, P3: %.2f, P4: %.2f bar, 壓差(P4-P2): %.2f bar",
+    debug(debug_tag, "壓力數據 - P1: %.2f, P2: %.2f, P3: %.2f, P4: %.2f bar, 壓差(P2-P4): %.2f bar",
           data->P1_primary_inlet, data->P2_secondary_outlet,
           data->P3_primary_outlet, data->P4_secondary_inlet,
           data->pressure_differential);
@@ -860,8 +864,8 @@ static float calculate_pressure_pid_output(pressure_pid_controller_t *pid, float
     float derivative_term = pid->kd * derivative;
 
     // PID輸出計算
-    //float output = proportional + integral_term + derivative_term;
-    float output = proportional + derivative_term;
+    float output = proportional + integral_term + derivative_term;
+    //float output = proportional + derivative_term;
 
     // 輸出限制
     if (output > pid->output_max) output = pid->output_max;
@@ -871,8 +875,8 @@ static float calculate_pressure_pid_output(pressure_pid_controller_t *pid, float
     pid->previous_error = error;
     pid->previous_time = current_time;
 
-    debug(debug_tag, "壓差PID25 - 誤差: %.2f, P: %.2f, I: %.2f, D: %.2f, 輸出: %.2f%%",
-          error, proportional, integral_term, derivative_term, output);
+    debug(debug_tag, "壓差PID - 誤差: %.2f, P: %.2f, I_term: %.2f (I_accum: %.2f), D: %.2f, 輸出: %.2f%%, Δt: %.1fs, t_prev: %ld",
+          error, proportional, integral_term, pid->integral, derivative_term, output, delta_time, (long)pid->previous_time);
 
     return output;
 }
@@ -884,7 +888,7 @@ static void reset_pressure_pid_controller(pressure_pid_controller_t *pid) {
     pid->integral = 0.0f;
     pid->previous_error = 0.0f;
     pid->previous_time = time(NULL);
-    debug(debug_tag, "壓差PID控制器已重置");
+    info(debug_tag, "壓差PID控制器已重置 (previous_time = %ld)", (long)pid->previous_time);
 }
 
 /**
@@ -1065,7 +1069,7 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
     // 檢查並執行主泵切換（參照 ls80_3.c）
     check_and_switch_primary_pump();
 
-    info(debug_tag, "自動壓差控制模式執行 ((P4-P2)→Pset追蹤)");
+    info(debug_tag, "自動壓差控制模式執行 ((P2-P4)→Pset追蹤)");
 
     // 設定自動模式
     //modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 0);
@@ -1080,11 +1084,11 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
         warn(debug_tag, "讀取目標壓差失敗，使用預設值: %.2f bar", target_pressure_diff);
     }
 
-    // 當前壓差 = P4 - P2
+    // 當前壓差 = P2 - P4
     float current_pressure_diff = data->pressure_differential;
     float pressure_error = target_pressure_diff - current_pressure_diff;
 
-    info(debug_tag, "(P4-P2)→Pset追蹤: 目標=%.2f bar, 當前=%.2f bar, 誤差=%.2f bar",
+    info(debug_tag, "(P2-P4)→Pset追蹤: 目標=%.2f bar, 當前=%.2f bar, 誤差=%.2f bar",
          target_pressure_diff, current_pressure_diff, pressure_error);
 
     // PID控制計算
@@ -1586,12 +1590,12 @@ static void check_and_switch_primary_pump(void) {
  *
  * 【函數功能】
  * 這是壓力差控制邏輯的主入口函數，由控制邏輯管理器週期性調用。
- * 實現 (P4-P2)→Pset 壓力差追蹤控制
+ * 實現 (P2-P4)→Pset 壓力差追蹤控制
  *
  * 【執行流程】
  * 1. 檢查控制邏輯是否啟用 (REG_CONTROL_LOGIC_2_ENABLE)
  * 2. 讀取壓力感測器數據 (P1, P2, P3, P4)
- * 3. 計算壓力差 (P4 - P2)
+ * 3. 計算壓力差 (P2 - P4)
  * 4. 檢查控制模式（手動/自動）
  * 5. 執行對應的控制邏輯
  *
