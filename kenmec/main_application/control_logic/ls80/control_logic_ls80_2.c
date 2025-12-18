@@ -112,7 +112,7 @@
 static const char *debug_tag = "ls80_2_m_v01";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_2.json"
-#define CONFIG_REGISTER_LIST_SIZE 25
+#define CONFIG_REGISTER_LIST_SIZE 28  // 從 25 改為 28 (新增 3 個壓力停機保護寄存器)
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 // ========== 系統控制 ==========
@@ -144,6 +144,11 @@ static uint32_t REG_PUMP2_MANUAL_MODE = 45022; // Pump2手動模式
 static uint32_t REG_P_HIGH_ALARM = 46201;      // 最高壓力限制（預設 5.0 Bar）
 static uint32_t REG_P_LOW_ALARM = 46202;       // 最低壓力限制（預設 0.5 Bar）
 
+// ========== 壓力停機保護（46xxx）==========
+static uint32_t REG_P2_PRESS_HIGH_STOP = 46272;    // P2壓力過高停機閾值（預設 6.0 Bar）
+static uint32_t REG_P4_PRESS_LOW_STOP = 46273;     // P4壓力過低停機閾值（預設 0.3 Bar）
+static uint32_t REG_P2_P4_PRESS_STOP = 46274;      // (P2-P4)壓差停機閾值（預設 2.0 Bar）
+
 // ========== 主泵輪換相關寄存器（與 ls80_3.c 共享）==========
 static uint32_t REG_PUMP_SWITCH_HOUR = 45034;      // 主泵切換時數設定 (小時, 0=停用自動切換)
 static uint32_t REG_PUMP1_USE = 45036;             // Pump1 啟用開關 (0=停用, 1=啟用)
@@ -167,7 +172,7 @@ static uint32_t REG_PUMP2_AUTO_MODE_MINUTES = 42173;  // Pump2 AUTO 模式累計
 
 // ========== 顯示時間持久化配置（與 ls80_3.c 共享機制）==========
 #define DISPLAY_TIME_PERSIST_FILE "/usrdata/ls80_2_display_time.json"
-#define DISPLAY_TIME_SAVE_INTERVAL 300  // 每 5 分鐘保存一次 (秒)
+#define DISPLAY_TIME_SAVE_INTERVAL 120  // 每 2 分鐘保存一次 (秒)
 
 // 主泵狀態持久化配置
 #define PRIMARY_PUMP_PERSIST_FILE "/usrdata/ls80_2_primary_pump.json"
@@ -269,6 +274,10 @@ static void calculate_pump_control(float pid_output, pump_control_output_t *outp
 static void execute_pump_control_output(const pump_control_output_t *output);
 static void handle_auto_start_stop_and_flow_mode(void);
 static void restore_pump_manual_mode_if_saved(void);
+
+// ========== 壓力停機保護函數宣告 ==========
+static int check_pressure_shutdown_protection(const pressure_sensor_data_t *data);
+static void emergency_pressure_shutdown(void);
 
 // ========== 主泵輪換相關函數宣告 ==========
 static void accumulate_auto_mode_time(uint32_t hour_reg, uint32_t min_reg, time_t elapsed);
@@ -584,6 +593,24 @@ static int _register_list_init(void)
     _control_logic_register_list[14].default_address = REG_P_LOW_ALARM;
     _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
+    // P2壓力過高停機閾值
+    _control_logic_register_list[15].name = REG_P2_PRESS_HIGH_STOP_STR;
+    _control_logic_register_list[15].address_ptr = &REG_P2_PRESS_HIGH_STOP;
+    _control_logic_register_list[15].default_address = REG_P2_PRESS_HIGH_STOP;
+    _control_logic_register_list[15].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // P4壓力過低停機閾值
+    _control_logic_register_list[16].name = REG_P4_PRESS_LOW_STOP_STR;
+    _control_logic_register_list[16].address_ptr = &REG_P4_PRESS_LOW_STOP;
+    _control_logic_register_list[16].default_address = REG_P4_PRESS_LOW_STOP;
+    _control_logic_register_list[16].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // (P2-P4)壓差停機閾值
+    _control_logic_register_list[17].name = REG_P2_P4_PRESS_STOP_STR;
+    _control_logic_register_list[17].address_ptr = &REG_P2_P4_PRESS_STOP;
+    _control_logic_register_list[17].default_address = REG_P2_P4_PRESS_STOP;
+    _control_logic_register_list[17].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
     // 從配置檔案載入
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
@@ -677,6 +704,56 @@ int control_logic_ls80_2_pressure_control_init(void)
     }
 
     info(debug_tag, "【診斷】壓力限制初始化完成");
+
+    // ========== 初始化 P2 壓力過高停機閾值 ==========
+    info(debug_tag, "【診斷】開始初始化 P2 壓力過高停機閾值...");
+    uint16_t p2_high_stop = modbus_read_input_register(REG_P2_PRESS_HIGH_STOP);
+
+    if (p2_high_stop == 0 || p2_high_stop == 0xFFFF) {
+        modbus_write_single_register(REG_P2_PRESS_HIGH_STOP, 600);  // 預設 6.0 Bar
+        uint16_t verify = modbus_read_input_register(REG_P2_PRESS_HIGH_STOP);
+        if (verify == 600) {
+            info(debug_tag, "【開機初始化】設定 P2 壓力過高停機閾值: 6.0 Bar ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 P2 壓力過高停機閾值失敗! 回讀值=%u", verify);
+        }
+    } else {
+        info(debug_tag, "【開機初始化】保留 P2 壓力過高停機閾值: %.2f Bar", p2_high_stop / 100.0f);
+    }
+
+    // ========== 初始化 P4 壓力過低停機閾值 ==========
+    info(debug_tag, "【診斷】開始初始化 P4 壓力過低停機閾值...");
+    uint16_t p4_low_stop = modbus_read_input_register(REG_P4_PRESS_LOW_STOP);
+
+    if (p4_low_stop == 0 || p4_low_stop == 0xFFFF) {
+        modbus_write_single_register(REG_P4_PRESS_LOW_STOP, 30);  // 預設 0.3 Bar
+        uint16_t verify = modbus_read_input_register(REG_P4_PRESS_LOW_STOP);
+        if (verify == 30) {
+            info(debug_tag, "【開機初始化】設定 P4 壓力過低停機閾值: 0.3 Bar ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 P4 壓力過低停機閾值失敗! 回讀值=%u", verify);
+        }
+    } else {
+        info(debug_tag, "【開機初始化】保留 P4 壓力過低停機閾值: %.2f Bar", p4_low_stop / 100.0f);
+    }
+
+    // ========== 初始化 (P2-P4) 壓差停機閾值 ==========
+    info(debug_tag, "【診斷】開始初始化 (P2-P4) 壓差停機閾值...");
+    uint16_t p2_p4_stop = modbus_read_input_register(REG_P2_P4_PRESS_STOP);
+
+    if (p2_p4_stop == 0 || p2_p4_stop == 0xFFFF) {
+        modbus_write_single_register(REG_P2_P4_PRESS_STOP, 200);  // 預設 2.0 Bar
+        uint16_t verify = modbus_read_input_register(REG_P2_P4_PRESS_STOP);
+        if (verify == 200) {
+            info(debug_tag, "【開機初始化】設定 (P2-P4) 壓差停機閾值: 2.0 Bar ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 (P2-P4) 壓差停機閾值失敗! 回讀值=%u", verify);
+        }
+    } else {
+        info(debug_tag, "【開機初始化】保留 (P2-P4) 壓差停機閾值: %.2f Bar", p2_p4_stop / 100.0f);
+    }
+
+    info(debug_tag, "【診斷】壓力停機保護初始化完成");
 
     // ========== 恢復顯示時間 (斷電保持機制) ==========
     info(debug_tag, "【診斷】開始恢復顯示時間...");
@@ -778,6 +855,70 @@ static int check_pressure_limits(const pressure_sensor_data_t *data) {
     }
 
     return 0;  // 安全
+}
+
+/**
+ * 壓力停機保護檢查函數
+ * @param data 壓力感測器數據
+ * @return 0: 安全, 1: P2過高, 2: P4過低, 3: 壓差超限
+ */
+static int check_pressure_shutdown_protection(const pressure_sensor_data_t *data) {
+    // 讀取停機閾值
+    uint16_t p2_high_stop_raw = modbus_read_input_register(REG_P2_PRESS_HIGH_STOP);
+    uint16_t p4_low_stop_raw = modbus_read_input_register(REG_P4_PRESS_LOW_STOP);
+    uint16_t p2_p4_stop_raw = modbus_read_input_register(REG_P2_P4_PRESS_STOP);
+
+    float p2_high_limit = p2_high_stop_raw / 100.0f;
+    float p4_low_limit = p4_low_stop_raw / 100.0f;
+    float p2_p4_stop_limit = p2_p4_stop_raw / 100.0f;
+
+    // 檢查 P2 是否過高
+    if (data->P2_secondary_outlet > p2_high_limit) {
+        error(debug_tag, "【壓力停機保護】P2 壓力過高: %.2f Bar > %.2f Bar",
+              data->P2_secondary_outlet, p2_high_limit);
+        return 1;
+    }
+
+    // 檢查 P4 是否過低
+    if (data->P4_secondary_inlet < p4_low_limit && data->P4_secondary_inlet > 0.01f) {
+        error(debug_tag, "【壓力停機保護】P4 壓力過低: %.2f Bar < %.2f Bar",
+              data->P4_secondary_inlet, p4_low_limit);
+        return 2;
+    }
+
+    // 檢查 (P2-P4) 壓差是否超限
+    if (data->pressure_differential > p2_p4_stop_limit) {
+        error(debug_tag, "【壓力停機保護】(P2-P4) 壓差超限: %.2f Bar > %.2f Bar",
+              data->pressure_differential, p2_p4_stop_limit);
+        return 3;
+    }
+
+    // 壓差負值警告
+    if (data->pressure_differential < -0.5f) {
+        warn(debug_tag, "【壓力停機保護】壓差為負值: %.2f Bar", data->pressure_differential);
+    }
+
+    return 0;
+}
+
+/**
+ * 壓力停機緊急停機程序
+ */
+static void emergency_pressure_shutdown(void) {
+    error(debug_tag, "執行壓力停機緊急停機程序...");
+
+    // 停止泵浦 - 速度歸零
+    modbus_write_single_register(REG_PUMP1_SPEED, 0);
+    modbus_write_single_register(REG_PUMP2_SPEED, 0);
+
+    // 停止泵浦 - 控制停止
+    modbus_write_single_register(REG_PUMP1_CONTROL, 0);
+    modbus_write_single_register(REG_PUMP2_CONTROL, 0);
+
+    // 重置 PID (防止積分累積)
+    reset_pressure_pid_controller(&pressure_pid);
+
+    error(debug_tag, "壓力停機完成 - Pump1 & Pump2 已停止,PID 已重置");
 }
 
 /**
@@ -1658,6 +1799,25 @@ int control_logic_ls80_2_pressure_control(ControlLogic *ptr) {
         warn(debug_tag, "壓力超出安全限制範圍,請檢查系統!");
         // 注意: 這裡只記錄警告,不強制停機,實際停機邏輯需要由上層決定
         // 可以根據需求在這裡添加緊急停機邏輯
+    }
+
+    // 【步驟2.6】壓力停機保護檢查 (新增功能)
+    int shutdown_reason = check_pressure_shutdown_protection(&sensor_data);
+    if (shutdown_reason != 0) {
+        const char *reason_str;
+        switch (shutdown_reason) {
+            case 1: reason_str = "P2壓力過高"; break;
+            case 2: reason_str = "P4壓力過低"; break;
+            case 3: reason_str = "(P2-P4)壓差超限"; break;
+            default: reason_str = "未知原因"; break;
+        }
+        error(debug_tag, "【壓力停機保護】觸發停機: %s", reason_str);
+
+        // 執行緊急停機
+        emergency_pressure_shutdown();
+
+        // 返回錯誤代碼
+        return -10;  // -10 表示壓力停機保護觸發
     }
 
     // 【步驟3】監控顯示 P1 和 P3

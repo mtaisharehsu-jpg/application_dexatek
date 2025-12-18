@@ -170,6 +170,9 @@
 /* 閥門手動模式暫存器 */
 #define REG_VALVE_MANUAL_MODE_STR "VALVE_MANUAL_MODE" // 45061 - 閥門手動模式開關
 
+/* 補水泵手動模式暫存器 */
+#define REG_WATER_PUMP_MANUAL_MODE_STR "WATER_PUMP_MANUAL_MODE" // 45050 - 補水泵手動模式開關 (0=自動, 1=手動)
+
 /* 壓力警報暫存器 */
 #define REG_HIGH_PRESSURE_ALARM_STR "HIGH_PRESSURE_ALARM"       // 46271 - 高壓警報觸發閾值
 #define REG_HIGH_PRESSURE_SHUTDOWN_STR "HIGH_PRESSURE_SHUTDOWN" // 46272 - 高壓關機觸發閾值
@@ -181,6 +184,11 @@
 /* 壓力限制暫存器 (LS80-2) */
 #define REG_P_HIGH_ALARM_STR "P_HIGH_ALARM"  // 46201 - 最高壓力限制（Bar）
 #define REG_P_LOW_ALARM_STR "P_LOW_ALARM"    // 46202 - 最低壓力限制（Bar）
+
+/* 壓力停機保護暫存器 (LS80-2) */
+#define REG_P2_PRESS_HIGH_STOP_STR "P2_PRESS_HIGH_STOP"   // 46272 - P2壓力過高停機閾值（Bar）
+#define REG_P4_PRESS_LOW_STOP_STR "P4_PRESS_LOW_STOP"     // 46273 - P4壓力過低停機閾值（Bar）
+#define REG_P2_P4_PRESS_STOP_STR "P2_P4_PRESS_STOP"       // 46274 - (P2-P4)壓差停機閾值（Bar）
 
 /* 流量限制暫存器 (LS80-3) */
 #define REG_F_HIGH_ALARM_STR "F_HIGH_ALARM"  // 46401 - 最高流量限制（LPM）
