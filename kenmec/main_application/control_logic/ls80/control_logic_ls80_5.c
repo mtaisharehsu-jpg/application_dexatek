@@ -132,6 +132,7 @@ typedef enum {
     WATER_PUMP_STATE_IDLE = 0,    // 閒置
     WATER_PUMP_STATE_STARTING,    // 啟動中
     WATER_PUMP_STATE_RUNNING,     // 運行中
+    WATER_PUMP_STATE_PRESSURE_REACHED_DELAYING,  // 壓力達標延遲運轉中
     WATER_PUMP_STATE_STOPPING,   // 停止中
     WATER_PUMP_STATE_COMPLETED,   // 完成
     WATER_PUMP_STATE_TIMEOUT,     // 超時
@@ -269,12 +270,12 @@ static bool read_water_pump_config(water_pump_config_t* config) {
     uint16_t warning_delay_raw = read_holding_register(REG_WARNING_DELAY);
     uint16_t max_fail_count_raw = read_holding_register(REG_MAX_FAIL_COUNT);
     
-    // debug(tag, "pressure_raw = %d (HMI)(%d)", pressure_raw, REG_TARGET_PRESSURE);
-    // debug(tag, "start_delay_raw = %d (HMI)(%d)", start_delay_raw, REG_START_DELAY);
-    // debug(tag, "max_run_time_raw = %d (HMI)(%d)", max_run_time_raw, REG_MAX_RUN_TIME);
-    // debug(tag, "complete_delay_raw = %d (HMI)(%d)", complete_delay_raw, REG_COMPLETE_DELAY);
-    // debug(tag, "warning_delay_raw = %d (HMI)(%d)", warning_delay_raw, REG_WARNING_DELAY);
-    // debug(tag, "max_fail_count_raw = %d (HMI)(%d)", max_fail_count_raw, REG_MAX_FAIL_COUNT);
+    debug(tag, "pressure_raw = %d (HMI)(%d)", pressure_raw, REG_TARGET_PRESSURE);
+    debug(tag, "start_delay_raw = %d (HMI)(%d)", start_delay_raw, REG_START_DELAY);
+    debug(tag, "max_run_time_raw = %d (HMI)(%d)", max_run_time_raw, REG_MAX_RUN_TIME);
+    debug(tag, "complete_delay_raw = %d (HMI)(%d)", complete_delay_raw, REG_COMPLETE_DELAY);
+    debug(tag, "warning_delay_raw = %d (HMI)(%d)", warning_delay_raw, REG_WARNING_DELAY);
+    debug(tag, "max_fail_count_raw = %d (HMI)(%d)", max_fail_count_raw, REG_MAX_FAIL_COUNT);
 
     if (pressure_raw != 0xFFFF) {
         config->target_pressure = (float)pressure_raw / 100.0f; // 0.01bar精度
@@ -569,16 +570,18 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
             bool high_level_reached = status->high_level;
 
             if (pressure_reached) {
-                info(tag, "Auto mode: Target pressure reached (%.2f >= %.2f bar), stopping pump",
+                info(tag, "Auto mode: Target pressure reached (%.2f >= %.2f bar), entering delay mode",
                      status->current_pressure, config->target_pressure);
 
                 if (high_level_reached) {
                     debug(tag, "Auto mode: Both high level and target pressure reached");
                 }
 
-                stop_water_pump(controller);
-                controller->pump_state = WATER_PUMP_STATE_COMPLETED;
-                status->start_time_ms = current_time_ms;
+                // 不停止補水泵,進入延遲運轉狀態
+                controller->pump_state = WATER_PUMP_STATE_PRESSURE_REACHED_DELAYING;
+                status->start_time_ms = current_time_ms;  // 重新記錄時間作為延遲計時起點
+                info(tag, "Auto mode: Pump will continue running for %.1f seconds before stopping",
+                     config->complete_delay_ms / 1000.0f);
                 break;
             }
 
@@ -615,7 +618,54 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
 
             status->level_confirmed = false; // 運行中重置確認狀態
             break;
-            
+
+        case WATER_PUMP_STATE_PRESSURE_REACHED_DELAYING:
+            // 壓力達標後延遲運轉狀態 - 補水泵繼續運轉,但準備停止
+
+            // 安全檢查優先 - 檢測到異常立即停止
+            if (status->leak_detected) {
+                warn(tag, "Auto mode: Leak detected during delay, emergency stop");
+                stop_water_pump(controller);
+                controller->pump_state = WATER_PUMP_STATE_ERROR;
+                break;
+            }
+
+            if (!status->system_normal) {
+                warn(tag, "Auto mode: System abnormal during delay, stopping pump");
+                stop_water_pump(controller);
+                controller->pump_state = WATER_PUMP_STATE_ERROR;
+                break;
+            }
+
+            // 檢查壓力是否仍然達標
+            bool still_pressure_reached = (status->current_pressure >= config->target_pressure);
+
+            if (still_pressure_reached) {
+                // 壓力仍達標 - 檢查延遲時間是否到期
+                uint32_t elapsed_delay_ms = current_time_ms - status->start_time_ms;
+
+                if (elapsed_delay_ms >= config->complete_delay_ms) {
+                    // 延遲時間已到,停止補水泵
+                    info(tag, "Auto mode: Delay complete (%.1f s), stopping pump",
+                         elapsed_delay_ms / 1000.0f);
+                    stop_water_pump(controller);
+                    controller->pump_state = WATER_PUMP_STATE_COMPLETED;
+                    status->start_time_ms = current_time_ms;
+                    break;
+                } else {
+                    // 延遲時間未到,繼續運轉
+                    debug(tag, "Auto mode: DELAYING - pressure=%.2f/%.2f bar, remaining=%.1f s",
+                          status->current_pressure, config->target_pressure,
+                          (config->complete_delay_ms - elapsed_delay_ms) / 1000.0f);
+                }
+            } else {
+                // 壓力下降低於設定值 - 重新計時延遲時間 (延長運轉)
+                info(tag, "Auto mode: Pressure dropped to %.2f bar (< %.2f bar) during delay, restarting delay timer",
+                     status->current_pressure, config->target_pressure);
+                status->start_time_ms = current_time_ms;  // 重新計時
+            }
+            break;
+
         case WATER_PUMP_STATE_STOPPING:
             // 確認泵浦已停止
             if (!status->is_running) {
