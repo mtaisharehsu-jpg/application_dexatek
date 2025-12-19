@@ -5,8 +5,6 @@
  * 【版本說明】
  * ============================================================================
  * - 檔案名稱：control_logic_ls80_2_m_v01.c（手動替換版本）
- * - 替換目標：control_logic_ls80_2.c
- * - 部署方式：手動改名為 control_logic_ls80_2.c 後執行 ./build_kenmec.sh 編譯
  * - 版本：v01
  * - 日期：2025
  *
@@ -23,15 +21,8 @@
  * - 預設目標壓差：REG_PRESSURE_SETPOINT (45002)
  * - 追蹤模式：(P2-P4)→Pset
  *
- * ============================================================================
- * 【與原版差異】
- * ============================================================================
- * 原版 control_logic_ls80_2.c：
- * - 計算 P1-P3 壓力差（一次側）
- * - 使用 411xxx 硬體地址
- * - 泵速寫入：speed × 10 × 10 = mV (0-10000mV)
  *
- * 新版 control_logic_ls80_2_m_v01.c：
+ *  control_logic_ls80_2_m_v01.c：
  * - 計算 P2-P4 壓力差（二次側）
  * - 使用 42xxx 映射地址（參照 ls80_3.c 流量控制）
  * - 泵速寫入：直接寫入 0-100%（簡化方式）
@@ -98,7 +89,6 @@
  * - 壓力差超限警報
  * - 緊急停機邏輯
  *
- * 作者: Claude AI (基於 control_logic_ls80_3.c 架構)
  * 日期: 2025
  * 版本: v01
  */
@@ -350,23 +340,23 @@ static void switch_to_manual_mode_with_last_speed(void) {
 /**
  * 處理 AUTO_START_STOP 與 FLOW_MODE 寄存器的聯動控制
  *
- * 【需求1A】FLOW_MODE 0→1 切換 (在 AUTO_START_STOP=1 時)
+ * FLOW_MODE 0→1 切換 (在 AUTO_START_STOP=1 時)
  * - 條件: AUTO_START_STOP=1 且 FLOW_MODE 從 0→1
  * - 動作: ENABLE_3=0, ENABLE_2=1
  *
- * 【需求1B】FLOW_MODE 1→0 切換 (在 AUTO_START_STOP=1 時)
+ * FLOW_MODE 1→0 切換 (在 AUTO_START_STOP=1 時)
  * - 條件: AUTO_START_STOP=1 且 FLOW_MODE 從 1→0
  * - 動作: ENABLE_3=1, ENABLE_2=0
  *
- * 【需求2】AUTO_START_STOP=0 時持續檢查
+ * AUTO_START_STOP=0 時持續檢查
  * - 條件: AUTO_START_STOP 的狀態為 0
  * - 動作: 持續強制 ENABLE_3=0, ENABLE_2=0
  *
- * 【需求3A】AUTO_START_STOP 0→1 (處理 FLOW_MODE=1 情況)
+ * AUTO_START_STOP 0→1 (處理 FLOW_MODE=1 情況)
  * - 條件: AUTO_START_STOP 從 0→1 且 FLOW_MODE=1
  * - 動作: ENABLE_2=1
  *
- * 【需求3B】AUTO_START_STOP 1→0
+ * AUTO_START_STOP 1→0
  * - 條件: AUTO_START_STOP 從 1→0 且 ENABLE_2=1
  * - 動作: ENABLE_2=0
  */
@@ -381,7 +371,7 @@ static void handle_auto_start_stop_and_flow_mode(void) {
         return;
     }
 
-    // 【需求2 - 最高優先級】AUTO_START_STOP=0 時，持續強制 ENABLE_2=0, ENABLE_3=0
+    // 【 最高優先級】AUTO_START_STOP=0 時，持續強制 ENABLE_2=0, ENABLE_3=0
     if (current_auto_start_stop == 0) {
         // 檢測 AUTO_START_STOP 1→0 邊緣,保存 PUMP_MANUAL_MODE
         if (previous_auto_start_stop == 1) {
@@ -407,31 +397,31 @@ static void handle_auto_start_stop_and_flow_mode(void) {
 
     // 以下邏輯只在 AUTO_START_STOP=1 時執行
 
-    // 【需求3A】AUTO_START_STOP 0→1 邊緣觸發
+    // AUTO_START_STOP 0→1 邊緣觸發
     if (previous_auto_start_stop == 0 && current_auto_start_stop == 1) {
         if (current_flow_mode == 1) {
             // FLOW_MODE=1 (壓差模式) → 啟用 ENABLE_2
             bool success = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 1);
             if (success) {
-                info(debug_tag, "【需求3A】AUTO_START_STOP 0→1 且 FLOW_MODE=1 → ENABLE_2=1");
+                info(debug_tag, "AUTO_START_STOP 0→1 且 FLOW_MODE=1 → ENABLE_2=1");
             }
         }
         // 注意: FLOW_MODE=0 的情況由 ls80_3.c 處理 (舊邏輯保留)
     }
 
-    // 【需求3B】AUTO_START_STOP 1→0 邊緣觸發
+    // AUTO_START_STOP 1→0 邊緣觸發
     if (previous_auto_start_stop == 1 && current_auto_start_stop == 0) {
         uint16_t enable_2 = modbus_read_input_register(REG_CONTROL_LOGIC_2_ENABLE);
 
         if (enable_2 == 1) {
             bool success = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
             if (success) {
-                info(debug_tag, "【需求3B】AUTO_START_STOP 1→0 且 ENABLE_2=1 → ENABLE_2=0");
+                info(debug_tag, "AUTO_START_STOP 1→0 且 ENABLE_2=1 → ENABLE_2=0");
             }
         }
     }
 
-    // 【需求1A】FLOW_MODE 0→1 邊緣觸發 (只在 AUTO_START_STOP=1 時)
+    // FLOW_MODE 0→1 邊緣觸發 (只在 AUTO_START_STOP=1 時)
     if (previous_flow_mode == 0 && current_flow_mode == 1) {
         // 保存當前 PUMP_MANUAL_MODE 狀態
         saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
@@ -444,11 +434,11 @@ static void handle_auto_start_stop_and_flow_mode(void) {
         bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 1);
 
         if (success1 && success2) {
-            info(debug_tag, "【需求1A】FLOW_MODE 0→1 (AUTO_START_STOP=1) → ENABLE_3=0, ENABLE_2=1");
+            info(debug_tag, "FLOW_MODE 0→1 (AUTO_START_STOP=1) → ENABLE_3=0, ENABLE_2=1");
         }
     }
 
-    // 【需求1B】FLOW_MODE 1→0 邊緣觸發 (只在 AUTO_START_STOP=1 時)
+    // FLOW_MODE 1→0 邊緣觸發 (只在 AUTO_START_STOP=1 時)
     if (previous_flow_mode == 1 && current_flow_mode == 0) {
         // 保存當前 PUMP_MANUAL_MODE 狀態
         saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
@@ -461,7 +451,7 @@ static void handle_auto_start_stop_and_flow_mode(void) {
         bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
 
         if (success1 && success2) {
-            info(debug_tag, "【需求1B】FLOW_MODE 1→0 (AUTO_START_STOP=1) → ENABLE_3=1, ENABLE_2=0");
+            info(debug_tag, "FLOW_MODE 1→0 (AUTO_START_STOP=1) → ENABLE_3=1, ENABLE_2=0");
         }
     }
 
@@ -914,6 +904,10 @@ static void emergency_pressure_shutdown(void) {
     // 停止泵浦 - 控制停止
     modbus_write_single_register(REG_PUMP1_CONTROL, 0);
     modbus_write_single_register(REG_PUMP2_CONTROL, 0);
+
+    // 停用自動啟停 - 需手動恢復
+    modbus_write_single_register(REG_AUTO_START_STOP, 0);
+    error(debug_tag, "【壓力停機保護】已停用 AUTO_START_STOP,需手動恢復自動功能");
 
     // 重置 PID (防止積分累積)
     reset_pressure_pid_controller(&pressure_pid);
