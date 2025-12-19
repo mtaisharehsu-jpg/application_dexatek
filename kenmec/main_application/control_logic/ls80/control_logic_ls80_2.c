@@ -5,8 +5,6 @@
  * 【版本說明】
  * ============================================================================
  * - 檔案名稱：control_logic_ls80_2_m_v01.c（手動替換版本）
- * - 替換目標：control_logic_ls80_2.c
- * - 部署方式：手動改名為 control_logic_ls80_2.c 後執行 ./build_kenmec.sh 編譯
  * - 版本：v01
  * - 日期：2025
  *
@@ -14,25 +12,18 @@
  * 【功能概述】
  * ============================================================================
  * 本模組實現 CDU 系統的壓力差控制功能，通過 PID 演算法維持冷卻水系統壓力差穩定
- * 支援 (P4-P2)→Pset 追蹤模式，並提供2泵協調控制策略，確保壓力差精確跟隨設定值
+ * 支援 (P2-P4)→Pset 追蹤模式，並提供2泵協調控制策略，確保壓力差精確跟隨設定值
  *
  * ============================================================================
  * 【控制目標】
  * ============================================================================
- * - 維持二次側壓力差 (P4進水 - P2出水) 追蹤設定值 Pset
+ * - 維持二次側壓力差 (P2出水 - P4進水 ) 追蹤設定值 Pset
  * - 預設目標壓差：REG_PRESSURE_SETPOINT (45002)
- * - 追蹤模式：(P4-P2)→Pset
+ * - 追蹤模式：(P2-P4)→Pset
  *
- * ============================================================================
- * 【與原版差異】
- * ============================================================================
- * 原版 control_logic_ls80_2.c：
- * - 計算 P1-P3 壓力差（一次側）
- * - 使用 411xxx 硬體地址
- * - 泵速寫入：speed × 10 × 10 = mV (0-10000mV)
  *
- * 新版 control_logic_ls80_2_m_v01.c：
- * - 計算 P4-P2 壓力差（二次側）
+ *  control_logic_ls80_2_m_v01.c：
+ * - 計算 P2-P4 壓力差（二次側）
  * - 使用 42xxx 映射地址（參照 ls80_3.c 流量控制）
  * - 泵速寫入：直接寫入 0-100%（簡化方式）
  * - 新增：P1 和 P3 壓力監控顯示
@@ -98,7 +89,6 @@
  * - 壓力差超限警報
  * - 緊急停機邏輯
  *
- * 作者: Claude AI (基於 control_logic_ls80_3.c 架構)
  * 日期: 2025
  * 版本: v01
  */
@@ -112,7 +102,7 @@
 static const char *debug_tag = "ls80_2_m_v01";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_2.json"
-#define CONFIG_REGISTER_LIST_SIZE 25
+#define CONFIG_REGISTER_LIST_SIZE 28  // 從 25 改為 28 (新增 3 個壓力停機保護寄存器)
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 // ========== 系統控制 ==========
@@ -144,6 +134,11 @@ static uint32_t REG_PUMP2_MANUAL_MODE = 45022; // Pump2手動模式
 static uint32_t REG_P_HIGH_ALARM = 46201;      // 最高壓力限制（預設 5.0 Bar）
 static uint32_t REG_P_LOW_ALARM = 46202;       // 最低壓力限制（預設 0.5 Bar）
 
+// ========== 壓力停機保護（46xxx）==========
+static uint32_t REG_P2_PRESS_HIGH_STOP = 46272;    // P2壓力過高停機閾值（預設 6.0 Bar）
+static uint32_t REG_P4_PRESS_LOW_STOP = 46273;     // P4壓力過低停機閾值（預設 0.3 Bar）
+static uint32_t REG_P2_P4_PRESS_STOP = 46274;      // (P2-P4)壓差停機閾值（預設 2.0 Bar）
+
 // ========== 主泵輪換相關寄存器（與 ls80_3.c 共享）==========
 static uint32_t REG_PUMP_SWITCH_HOUR = 45034;      // 主泵切換時數設定 (小時, 0=停用自動切換)
 static uint32_t REG_PUMP1_USE = 45036;             // Pump1 啟用開關 (0=停用, 1=啟用)
@@ -167,7 +162,10 @@ static uint32_t REG_PUMP2_AUTO_MODE_MINUTES = 42173;  // Pump2 AUTO 模式累計
 
 // ========== 顯示時間持久化配置（與 ls80_3.c 共享機制）==========
 #define DISPLAY_TIME_PERSIST_FILE "/usrdata/ls80_2_display_time.json"
-#define DISPLAY_TIME_SAVE_INTERVAL 300  // 每 5 分鐘保存一次 (秒)
+#define DISPLAY_TIME_SAVE_INTERVAL 120  // 每 2 分鐘保存一次 (秒)
+
+// 主泵狀態持久化配置
+#define PRIMARY_PUMP_PERSIST_FILE "/usrdata/ls80_2_primary_pump.json"
 
 /*---------------------------------------------------------------------------
                                 Variables
@@ -184,7 +182,7 @@ typedef struct {
     float P2_secondary_outlet;    // P2二次側出水壓力（控制）
     float P3_primary_outlet;      // P3一次側出水壓力（監控）
     float P4_secondary_inlet;     // P4二次側進水壓力（控制）
-    float pressure_differential;  // 壓力差 (P4 - P2)
+    float pressure_differential;  // 壓力差 (P2 - P4)
     time_t timestamp;
 } pressure_sensor_data_t;
 
@@ -267,6 +265,10 @@ static void execute_pump_control_output(const pump_control_output_t *output);
 static void handle_auto_start_stop_and_flow_mode(void);
 static void restore_pump_manual_mode_if_saved(void);
 
+// ========== 壓力停機保護函數宣告 ==========
+static int check_pressure_shutdown_protection(const pressure_sensor_data_t *data);
+static void emergency_pressure_shutdown(void);
+
 // ========== 主泵輪換相關函數宣告 ==========
 static void accumulate_auto_mode_time(uint32_t hour_reg, uint32_t min_reg, time_t elapsed);
 static void update_primary_pump_auto_time(int pump_index, primary_pump_auto_tracker_t *tracker,
@@ -275,6 +277,8 @@ static void update_display_auto_time(void);
 static void check_and_switch_primary_pump(void);
 static int save_display_time_to_file(void);
 static int restore_display_time_from_file(void);
+static int save_primary_pump_state_to_file(void);
+static int restore_primary_pump_state_from_file(void);
 
 /*---------------------------------------------------------------------------
                             Implementation
@@ -336,23 +340,23 @@ static void switch_to_manual_mode_with_last_speed(void) {
 /**
  * 處理 AUTO_START_STOP 與 FLOW_MODE 寄存器的聯動控制
  *
- * 【需求1A】FLOW_MODE 0→1 切換 (在 AUTO_START_STOP=1 時)
+ * FLOW_MODE 0→1 切換 (在 AUTO_START_STOP=1 時)
  * - 條件: AUTO_START_STOP=1 且 FLOW_MODE 從 0→1
  * - 動作: ENABLE_3=0, ENABLE_2=1
  *
- * 【需求1B】FLOW_MODE 1→0 切換 (在 AUTO_START_STOP=1 時)
+ * FLOW_MODE 1→0 切換 (在 AUTO_START_STOP=1 時)
  * - 條件: AUTO_START_STOP=1 且 FLOW_MODE 從 1→0
  * - 動作: ENABLE_3=1, ENABLE_2=0
  *
- * 【需求2】AUTO_START_STOP=0 時持續檢查
+ * AUTO_START_STOP=0 時持續檢查
  * - 條件: AUTO_START_STOP 的狀態為 0
  * - 動作: 持續強制 ENABLE_3=0, ENABLE_2=0
  *
- * 【需求3A】AUTO_START_STOP 0→1 (處理 FLOW_MODE=1 情況)
+ * AUTO_START_STOP 0→1 (處理 FLOW_MODE=1 情況)
  * - 條件: AUTO_START_STOP 從 0→1 且 FLOW_MODE=1
  * - 動作: ENABLE_2=1
  *
- * 【需求3B】AUTO_START_STOP 1→0
+ * AUTO_START_STOP 1→0
  * - 條件: AUTO_START_STOP 從 1→0 且 ENABLE_2=1
  * - 動作: ENABLE_2=0
  */
@@ -367,7 +371,7 @@ static void handle_auto_start_stop_and_flow_mode(void) {
         return;
     }
 
-    // 【需求2 - 最高優先級】AUTO_START_STOP=0 時，持續強制 ENABLE_2=0, ENABLE_3=0
+    // 【 最高優先級】AUTO_START_STOP=0 時，持續強制 ENABLE_2=0, ENABLE_3=0
     if (current_auto_start_stop == 0) {
         // 檢測 AUTO_START_STOP 1→0 邊緣,保存 PUMP_MANUAL_MODE
         if (previous_auto_start_stop == 1) {
@@ -393,31 +397,31 @@ static void handle_auto_start_stop_and_flow_mode(void) {
 
     // 以下邏輯只在 AUTO_START_STOP=1 時執行
 
-    // 【需求3A】AUTO_START_STOP 0→1 邊緣觸發
+    // AUTO_START_STOP 0→1 邊緣觸發
     if (previous_auto_start_stop == 0 && current_auto_start_stop == 1) {
         if (current_flow_mode == 1) {
             // FLOW_MODE=1 (壓差模式) → 啟用 ENABLE_2
             bool success = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 1);
             if (success) {
-                info(debug_tag, "【需求3A】AUTO_START_STOP 0→1 且 FLOW_MODE=1 → ENABLE_2=1");
+                info(debug_tag, "AUTO_START_STOP 0→1 且 FLOW_MODE=1 → ENABLE_2=1");
             }
         }
         // 注意: FLOW_MODE=0 的情況由 ls80_3.c 處理 (舊邏輯保留)
     }
 
-    // 【需求3B】AUTO_START_STOP 1→0 邊緣觸發
+    // AUTO_START_STOP 1→0 邊緣觸發
     if (previous_auto_start_stop == 1 && current_auto_start_stop == 0) {
         uint16_t enable_2 = modbus_read_input_register(REG_CONTROL_LOGIC_2_ENABLE);
 
         if (enable_2 == 1) {
             bool success = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
             if (success) {
-                info(debug_tag, "【需求3B】AUTO_START_STOP 1→0 且 ENABLE_2=1 → ENABLE_2=0");
+                info(debug_tag, "AUTO_START_STOP 1→0 且 ENABLE_2=1 → ENABLE_2=0");
             }
         }
     }
 
-    // 【需求1A】FLOW_MODE 0→1 邊緣觸發 (只在 AUTO_START_STOP=1 時)
+    // FLOW_MODE 0→1 邊緣觸發 (只在 AUTO_START_STOP=1 時)
     if (previous_flow_mode == 0 && current_flow_mode == 1) {
         // 保存當前 PUMP_MANUAL_MODE 狀態
         saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
@@ -430,11 +434,11 @@ static void handle_auto_start_stop_and_flow_mode(void) {
         bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 1);
 
         if (success1 && success2) {
-            info(debug_tag, "【需求1A】FLOW_MODE 0→1 (AUTO_START_STOP=1) → ENABLE_3=0, ENABLE_2=1");
+            info(debug_tag, "FLOW_MODE 0→1 (AUTO_START_STOP=1) → ENABLE_3=0, ENABLE_2=1");
         }
     }
 
-    // 【需求1B】FLOW_MODE 1→0 邊緣觸發 (只在 AUTO_START_STOP=1 時)
+    // FLOW_MODE 1→0 邊緣觸發 (只在 AUTO_START_STOP=1 時)
     if (previous_flow_mode == 1 && current_flow_mode == 0) {
         // 保存當前 PUMP_MANUAL_MODE 狀態
         saved_pump1_manual_mode = modbus_read_input_register(REG_PUMP1_MANUAL_MODE);
@@ -447,7 +451,7 @@ static void handle_auto_start_stop_and_flow_mode(void) {
         bool success2 = modbus_write_single_register(REG_CONTROL_LOGIC_2_ENABLE, 0);
 
         if (success1 && success2) {
-            info(debug_tag, "【需求1B】FLOW_MODE 1→0 (AUTO_START_STOP=1) → ENABLE_3=1, ENABLE_2=0");
+            info(debug_tag, "FLOW_MODE 1→0 (AUTO_START_STOP=1) → ENABLE_3=1, ENABLE_2=0");
         }
     }
 
@@ -579,6 +583,24 @@ static int _register_list_init(void)
     _control_logic_register_list[14].default_address = REG_P_LOW_ALARM;
     _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
+    // P2壓力過高停機閾值
+    _control_logic_register_list[15].name = REG_P2_PRESS_HIGH_STOP_STR;
+    _control_logic_register_list[15].address_ptr = &REG_P2_PRESS_HIGH_STOP;
+    _control_logic_register_list[15].default_address = REG_P2_PRESS_HIGH_STOP;
+    _control_logic_register_list[15].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // P4壓力過低停機閾值
+    _control_logic_register_list[16].name = REG_P4_PRESS_LOW_STOP_STR;
+    _control_logic_register_list[16].address_ptr = &REG_P4_PRESS_LOW_STOP;
+    _control_logic_register_list[16].default_address = REG_P4_PRESS_LOW_STOP;
+    _control_logic_register_list[16].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // (P2-P4)壓差停機閾值
+    _control_logic_register_list[17].name = REG_P2_P4_PRESS_STOP_STR;
+    _control_logic_register_list[17].address_ptr = &REG_P2_P4_PRESS_STOP;
+    _control_logic_register_list[17].default_address = REG_P2_P4_PRESS_STOP;
+    _control_logic_register_list[17].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
     // 從配置檔案載入
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
@@ -613,6 +635,10 @@ int control_logic_ls80_2_pressure_control_init(void)
          REG_P_HIGH_ALARM, REG_P_LOW_ALARM);
 
     _register_list_init();
+
+    // ========== 初始化 PID 控制器 (參照 ls80_3.c) ==========
+    reset_pressure_pid_controller(&pressure_pid);
+    info(debug_tag, "PID 控制器已初始化並重置");
 
     // ========== 初始化壓力限制值 (斷電保持機制) ==========
     info(debug_tag, "【診斷】開始初始化壓力限制值...");
@@ -668,6 +694,85 @@ int control_logic_ls80_2_pressure_control_init(void)
     }
 
     info(debug_tag, "【診斷】壓力限制初始化完成");
+
+    // ========== 初始化 P2 壓力過高停機閾值 ==========
+    info(debug_tag, "【診斷】開始初始化 P2 壓力過高停機閾值...");
+    uint16_t p2_high_stop = modbus_read_input_register(REG_P2_PRESS_HIGH_STOP);
+
+    if (p2_high_stop == 0 || p2_high_stop == 0xFFFF) {
+        modbus_write_single_register(REG_P2_PRESS_HIGH_STOP, 600);  // 預設 6.0 Bar
+        uint16_t verify = modbus_read_input_register(REG_P2_PRESS_HIGH_STOP);
+        if (verify == 600) {
+            info(debug_tag, "【開機初始化】設定 P2 壓力過高停機閾值: 6.0 Bar ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 P2 壓力過高停機閾值失敗! 回讀值=%u", verify);
+        }
+    } else {
+        info(debug_tag, "【開機初始化】保留 P2 壓力過高停機閾值: %.2f Bar", p2_high_stop / 100.0f);
+    }
+
+    // ========== 初始化 P4 壓力過低停機閾值 ==========
+    info(debug_tag, "【診斷】開始初始化 P4 壓力過低停機閾值...");
+    uint16_t p4_low_stop = modbus_read_input_register(REG_P4_PRESS_LOW_STOP);
+
+    if (p4_low_stop == 0 || p4_low_stop == 0xFFFF) {
+        modbus_write_single_register(REG_P4_PRESS_LOW_STOP, 30);  // 預設 0.3 Bar
+        uint16_t verify = modbus_read_input_register(REG_P4_PRESS_LOW_STOP);
+        if (verify == 30) {
+            info(debug_tag, "【開機初始化】設定 P4 壓力過低停機閾值: 0.3 Bar ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 P4 壓力過低停機閾值失敗! 回讀值=%u", verify);
+        }
+    } else {
+        info(debug_tag, "【開機初始化】保留 P4 壓力過低停機閾值: %.2f Bar", p4_low_stop / 100.0f);
+    }
+
+    // ========== 初始化 (P2-P4) 壓差停機閾值 ==========
+    info(debug_tag, "【診斷】開始初始化 (P2-P4) 壓差停機閾值...");
+    uint16_t p2_p4_stop = modbus_read_input_register(REG_P2_P4_PRESS_STOP);
+
+    if (p2_p4_stop == 0 || p2_p4_stop == 0xFFFF) {
+        modbus_write_single_register(REG_P2_P4_PRESS_STOP, 200);  // 預設 2.0 Bar
+        uint16_t verify = modbus_read_input_register(REG_P2_P4_PRESS_STOP);
+        if (verify == 200) {
+            info(debug_tag, "【開機初始化】設定 (P2-P4) 壓差停機閾值: 2.0 Bar ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 (P2-P4) 壓差停機閾值失敗! 回讀值=%u", verify);
+        }
+    } else {
+        info(debug_tag, "【開機初始化】保留 (P2-P4) 壓差停機閾值: %.2f Bar", p2_p4_stop / 100.0f);
+    }
+
+    info(debug_tag, "【診斷】壓力停機保護初始化完成");
+
+    // ========== 恢復顯示時間 (斷電保持機制) ==========
+    info(debug_tag, "【診斷】開始恢復顯示時間...");
+
+    if (restore_display_time_from_file() == SUCCESS) {
+        info(debug_tag, "【開機初始化】顯示時間恢復成功 ✓");
+    } else {
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
+        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
+        info(debug_tag, "【開機初始化】顯示時間初始化為 0:00 ✓");
+    }
+
+    info(debug_tag, "【診斷】顯示時間初始化完成");
+
+    // ========== 恢復主泵選擇 (斷電保持機制) ==========
+    info(debug_tag, "【診斷】開始恢復主泵選擇...");
+
+    if (restore_primary_pump_state_from_file() == SUCCESS) {
+        info(debug_tag, "【開機初始化】主泵選擇恢復成功 ✓");
+    } else {
+        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, 1);
+        info(debug_tag, "【開機初始化】主泵選擇初始化為 Pump1 ✓");
+
+        // ===== 立即創建基線文件 =====
+        save_primary_pump_state_to_file();
+        info(debug_tag, "【斷電保持】創建主泵狀態基線文件");
+    }
+
+    info(debug_tag, "【診斷】主泵選擇初始化完成");
 
     return ret;
 }
@@ -743,6 +848,74 @@ static int check_pressure_limits(const pressure_sensor_data_t *data) {
 }
 
 /**
+ * 壓力停機保護檢查函數
+ * @param data 壓力感測器數據
+ * @return 0: 安全, 1: P2過高, 2: P4過低, 3: 壓差超限
+ */
+static int check_pressure_shutdown_protection(const pressure_sensor_data_t *data) {
+    // 讀取停機閾值
+    uint16_t p2_high_stop_raw = modbus_read_input_register(REG_P2_PRESS_HIGH_STOP);
+    uint16_t p4_low_stop_raw = modbus_read_input_register(REG_P4_PRESS_LOW_STOP);
+    uint16_t p2_p4_stop_raw = modbus_read_input_register(REG_P2_P4_PRESS_STOP);
+
+    float p2_high_limit = p2_high_stop_raw / 100.0f;
+    float p4_low_limit = p4_low_stop_raw / 100.0f;
+    float p2_p4_stop_limit = p2_p4_stop_raw / 100.0f;
+
+    // 檢查 P2 是否過高
+    if (data->P2_secondary_outlet > p2_high_limit) {
+        error(debug_tag, "【壓力停機保護】P2 壓力過高: %.2f Bar > %.2f Bar",
+              data->P2_secondary_outlet, p2_high_limit);
+        return 1;
+    }
+
+    // 檢查 P4 是否過低
+    if (data->P4_secondary_inlet < p4_low_limit && data->P4_secondary_inlet > 0.01f) {
+        error(debug_tag, "【壓力停機保護】P4 壓力過低: %.2f Bar < %.2f Bar",
+              data->P4_secondary_inlet, p4_low_limit);
+        return 2;
+    }
+
+    // 檢查 (P2-P4) 壓差是否超限
+    if (data->pressure_differential > p2_p4_stop_limit) {
+        error(debug_tag, "【壓力停機保護】(P2-P4) 壓差超限: %.2f Bar > %.2f Bar",
+              data->pressure_differential, p2_p4_stop_limit);
+        return 3;
+    }
+
+    // 壓差負值警告
+    if (data->pressure_differential < -0.5f) {
+        warn(debug_tag, "【壓力停機保護】壓差為負值: %.2f Bar", data->pressure_differential);
+    }
+
+    return 0;
+}
+
+/**
+ * 壓力停機緊急停機程序
+ */
+static void emergency_pressure_shutdown(void) {
+    error(debug_tag, "執行壓力停機緊急停機程序...");
+
+    // 停止泵浦 - 速度歸零
+    modbus_write_single_register(REG_PUMP1_SPEED, 0);
+    modbus_write_single_register(REG_PUMP2_SPEED, 0);
+
+    // 停止泵浦 - 控制停止
+    modbus_write_single_register(REG_PUMP1_CONTROL, 0);
+    modbus_write_single_register(REG_PUMP2_CONTROL, 0);
+
+    // 停用自動啟停 - 需手動恢復
+    modbus_write_single_register(REG_AUTO_START_STOP, 0);
+    error(debug_tag, "【壓力停機保護】已停用 AUTO_START_STOP,需手動恢復自動功能");
+
+    // 重置 PID (防止積分累積)
+    reset_pressure_pid_controller(&pressure_pid);
+
+    error(debug_tag, "壓力停機完成 - Pump1 & Pump2 已停止,PID 已重置");
+}
+
+/**
  * 讀取所有壓力感測器數據
  */
 static int read_pressure_sensor_data(pressure_sensor_data_t *data) {
@@ -791,7 +964,7 @@ static int read_pressure_sensor_data(pressure_sensor_data_t *data) {
     // 設定時間戳
     data->timestamp = time(NULL);
 
-    debug(debug_tag, "壓力數據 - P1: %.2f, P2: %.2f, P3: %.2f, P4: %.2f bar, 壓差(P4-P2): %.2f bar",
+    debug(debug_tag, "壓力數據 - P1: %.2f, P2: %.2f, P3: %.2f, P4: %.2f bar, 壓差(P2-P4): %.2f bar",
           data->P1_primary_inlet, data->P2_secondary_outlet,
           data->P3_primary_outlet, data->P4_secondary_inlet,
           data->pressure_differential);
@@ -826,8 +999,8 @@ static float calculate_pressure_pid_output(pressure_pid_controller_t *pid, float
     float derivative_term = pid->kd * derivative;
 
     // PID輸出計算
-    //float output = proportional + integral_term + derivative_term;
-    float output = proportional + derivative_term;
+    float output = proportional + integral_term + derivative_term;
+    //float output = proportional + derivative_term;
 
     // 輸出限制
     if (output > pid->output_max) output = pid->output_max;
@@ -837,8 +1010,8 @@ static float calculate_pressure_pid_output(pressure_pid_controller_t *pid, float
     pid->previous_error = error;
     pid->previous_time = current_time;
 
-    debug(debug_tag, "壓差PID25 - 誤差: %.2f, P: %.2f, I: %.2f, D: %.2f, 輸出: %.2f%%",
-          error, proportional, integral_term, derivative_term, output);
+    debug(debug_tag, "壓差PID - 誤差: %.2f, P: %.2f, I_term: %.2f (I_accum: %.2f), D: %.2f, 輸出: %.2f%%, Δt: %.1fs, t_prev: %ld",
+          error, proportional, integral_term, pid->integral, derivative_term, output, delta_time, (long)pid->previous_time);
 
     return output;
 }
@@ -850,7 +1023,7 @@ static void reset_pressure_pid_controller(pressure_pid_controller_t *pid) {
     pid->integral = 0.0f;
     pid->previous_error = 0.0f;
     pid->previous_time = time(NULL);
-    debug(debug_tag, "壓差PID控制器已重置");
+    info(debug_tag, "壓差PID控制器已重置 (previous_time = %ld)", (long)pid->previous_time);
 }
 
 /**
@@ -869,8 +1042,8 @@ static void calculate_pump_control(float pid_output, pump_control_output_t *outp
     // === 讀取主泵選擇 ===
     uint16_t primary_pump = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
     if (primary_pump != 1 && primary_pump != 2) {
-        primary_pump = 1;  // 預設 Pump1
-        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, primary_pump);
+        primary_pump = 1;  // 只修改局部變數,不寫回寄存器
+        // 寄存器由初始化函數設定,這裡不應該修改
     }
 
     int primary_idx = primary_pump - 1;      // 主泵索引 (0 或 1)
@@ -1031,7 +1204,7 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
     // 檢查並執行主泵切換（參照 ls80_3.c）
     check_and_switch_primary_pump();
 
-    info(debug_tag, "自動壓差控制模式執行 ((P4-P2)→Pset追蹤)");
+    info(debug_tag, "自動壓差控制模式執行 ((P2-P4)→Pset追蹤)");
 
     // 設定自動模式
     //modbus_write_single_register(REG_PUMP1_MANUAL_MODE, 0);
@@ -1046,11 +1219,11 @@ static int execute_automatic_pressure_control(const pressure_sensor_data_t *data
         warn(debug_tag, "讀取目標壓差失敗，使用預設值: %.2f bar", target_pressure_diff);
     }
 
-    // 當前壓差 = P4 - P2
+    // 當前壓差 = P2 - P4
     float current_pressure_diff = data->pressure_differential;
     float pressure_error = target_pressure_diff - current_pressure_diff;
 
-    info(debug_tag, "(P4-P2)→Pset追蹤: 目標=%.2f bar, 當前=%.2f bar, 誤差=%.2f bar",
+    info(debug_tag, "(P2-P4)→Pset追蹤: 目標=%.2f bar, 當前=%.2f bar, 誤差=%.2f bar",
          target_pressure_diff, current_pressure_diff, pressure_error);
 
     // PID控制計算
@@ -1266,6 +1439,119 @@ static int restore_display_time_from_file(void) {
 }
 
 /**
+ * 保存主泵狀態到文件 (斷電保持)
+ *
+ * 功能:
+ * - 將當前主泵選擇 (REG_PRIMARY_PUMP_INDEX) 保存到 JSON 文件
+ * - 只保存有效值 (1 或 2)
+ * - 使用 fsync 確保數據寫入磁盤
+ *
+ * @return SUCCESS: 保存成功, FAILURE: 保存失敗
+ */
+static int save_primary_pump_state_to_file(void) {
+    uint16_t primary_pump = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
+
+    // 只保存有效值
+    if (primary_pump != 1 && primary_pump != 2) {
+        warn(debug_tag, "【斷電保持】主泵選擇值無效: %d, 不保存", primary_pump);
+        return FAIL;
+    }
+
+    // 建立 JSON 物件
+    cJSON *root = cJSON_CreateObject();
+    if (root == NULL) {
+        error(debug_tag, "【斷電保持】建立 JSON 物件失敗");
+        return FAIL;
+    }
+
+    cJSON_AddNumberToObject(root, "primary_pump", primary_pump);
+
+    // 轉換為字符串
+    char *json_str = cJSON_Print(root);
+    cJSON_Delete(root);
+
+    if (json_str == NULL) {
+        error(debug_tag, "【斷電保持】JSON 序列化失敗");
+        return FAIL;
+    }
+
+    // 寫入文件
+    FILE *fp = fopen(PRIMARY_PUMP_PERSIST_FILE, "w");
+    if (fp == NULL) {
+        error(debug_tag, "【斷電保持】無法打開文件寫入: %s", PRIMARY_PUMP_PERSIST_FILE);
+        free(json_str);
+        return FAIL;
+    }
+
+    fprintf(fp, "%s", json_str);
+    fflush(fp);
+    fsync(fileno(fp));
+    fclose(fp);
+    free(json_str);
+
+    return SUCCESS;
+}
+
+/**
+ * 從文件恢復主泵狀態 (斷電保持)
+ *
+ * 功能:
+ * - 從 JSON 文件讀取主泵選擇狀態
+ * - 驗證數據有效性 (必須為 1 或 2)
+ * - 寫回到 REG_PRIMARY_PUMP_INDEX 寄存器
+ *
+ * @return SUCCESS: 恢復成功, FAILURE: 文件不存在或數據無效
+ */
+static int restore_primary_pump_state_from_file(void) {
+    // 讀取整個文件
+    long json_len = 0;
+    char *json_text = control_logic_read_entire_file(PRIMARY_PUMP_PERSIST_FILE, &json_len);
+
+    if (json_text == NULL) {
+        info(debug_tag, "【斷電保持】主泵狀態持久化文件不存在,使用預設值 Pump1");
+        return FAIL;
+    }
+
+    // 解析 JSON
+    cJSON *root = cJSON_Parse(json_text);
+    free(json_text);
+
+    if (root == NULL) {
+        error(debug_tag, "【斷電保持】解析 JSON 失敗,文件可能已損壞");
+        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
+        return FAIL;
+    }
+
+    // 讀取主泵選擇
+    cJSON *primary_pump_item = cJSON_GetObjectItemCaseSensitive(root, "primary_pump");
+
+    if (!cJSON_IsNumber(primary_pump_item)) {
+        error(debug_tag, "【斷電保持】JSON 格式錯誤,缺少 primary_pump 字段");
+        cJSON_Delete(root);
+        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
+        return FAIL;
+    }
+
+    uint16_t primary_pump = (uint16_t)primary_pump_item->valueint;
+
+    // 數據驗證
+    if (primary_pump != 1 && primary_pump != 2) {
+        error(debug_tag, "【斷電保持】恢復的主泵選擇無效: %d (應為 1 或 2)", primary_pump);
+        cJSON_Delete(root);
+        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
+        return FAIL;
+    }
+
+    // 寫回寄存器
+    modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, primary_pump);
+
+    info(debug_tag, "【斷電保持】成功恢復主泵選擇: Pump%d", primary_pump);
+
+    cJSON_Delete(root);
+    return SUCCESS;
+}
+
+/**
  * 更新顯示時間（參照 ls80_3.c）
  * 功能:
  * - 偵測主泵變化,變化時自動歸零顯示時間
@@ -1304,6 +1590,11 @@ static void update_display_auto_time(void) {
         last_primary_pump_index = current_primary;
 
         info(debug_tag, "主泵顯示時間已歸零 (45046=0, 45047=0)");
+
+        // ========== 保存 HMI 手動修改的主泵狀態到文件 (斷電保持) ==========
+        save_primary_pump_state_to_file();
+        info(debug_tag, "【斷電保持】HMI 手動切換主泵,已保存新狀態: Pump%d", current_primary);
+
         return;  // 本次循環不進行累積,避免包含過渡時的時間
     }
 
@@ -1409,6 +1700,9 @@ static void check_and_switch_primary_pump(void) {
         uint16_t new_primary = (current_primary == 1) ? 2 : 1;
         modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, new_primary);
 
+        // ========== 保存主泵狀態到文件 (斷電保持) ==========
+        save_primary_pump_state_to_file();
+
         // 歸零顯示時間寄存器
         modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
         modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
@@ -1431,12 +1725,12 @@ static void check_and_switch_primary_pump(void) {
  *
  * 【函數功能】
  * 這是壓力差控制邏輯的主入口函數，由控制邏輯管理器週期性調用。
- * 實現 (P4-P2)→Pset 壓力差追蹤控制
+ * 實現 (P2-P4)→Pset 壓力差追蹤控制
  *
  * 【執行流程】
  * 1. 檢查控制邏輯是否啟用 (REG_CONTROL_LOGIC_2_ENABLE)
  * 2. 讀取壓力感測器數據 (P1, P2, P3, P4)
- * 3. 計算壓力差 (P4 - P2)
+ * 3. 計算壓力差 (P2 - P4)
  * 4. 檢查控制模式（手動/自動）
  * 5. 執行對應的控制邏輯
  *
@@ -1499,6 +1793,25 @@ int control_logic_ls80_2_pressure_control(ControlLogic *ptr) {
         warn(debug_tag, "壓力超出安全限制範圍,請檢查系統!");
         // 注意: 這裡只記錄警告,不強制停機,實際停機邏輯需要由上層決定
         // 可以根據需求在這裡添加緊急停機邏輯
+    }
+
+    // 【步驟2.6】壓力停機保護檢查 (新增功能)
+    int shutdown_reason = check_pressure_shutdown_protection(&sensor_data);
+    if (shutdown_reason != 0) {
+        const char *reason_str;
+        switch (shutdown_reason) {
+            case 1: reason_str = "P2壓力過高"; break;
+            case 2: reason_str = "P4壓力過低"; break;
+            case 3: reason_str = "(P2-P4)壓差超限"; break;
+            default: reason_str = "未知原因"; break;
+        }
+        error(debug_tag, "【壓力停機保護】觸發停機: %s", reason_str);
+
+        // 執行緊急停機
+        emergency_pressure_shutdown();
+
+        // 返回錯誤代碼
+        return -10;  // -10 表示壓力停機保護觸發
     }
 
     // 【步驟3】監控顯示 P1 和 P3
