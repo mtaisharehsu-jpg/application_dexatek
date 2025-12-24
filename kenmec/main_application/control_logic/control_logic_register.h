@@ -194,6 +194,26 @@
 #define REG_F_HIGH_ALARM_STR "F_HIGH_ALARM"  // 46401 - 最高流量限制（LPM）
 #define REG_F_LOW_ALARM_STR "F_LOW_ALARM"    // 46402 - 最低流量限制（LPM）
 
+/* PID 參數暫存器 - LS80-1 溫度控制 */
+#define REG_PID_TEMP_KP_STR "PID_TEMP_KP"                           // 45501 - 溫度控制 Kp (×100)
+#define REG_PID_TEMP_KI_STR "PID_TEMP_KI"                           // 45502 - 溫度控制 Ki (×100)
+#define REG_PID_TEMP_KD_STR "PID_TEMP_KD"                           // 45503 - 溫度控制 Kd (×100)
+
+/* PID 參數暫存器 - LS80-2 壓力控制 */
+#define REG_PID_PRESS_KP_STR "PID_PRESS_KP"                         // 45504 - 壓力控制 Kp (×100)
+#define REG_PID_PRESS_KI_STR "PID_PRESS_KI"                         // 45505 - 壓力控制 Ki (×100)
+#define REG_PID_PRESS_KD_STR "PID_PRESS_KD"                         // 45506 - 壓力控制 Kd (×100)
+
+/* PID 參數暫存器 - LS80-3 流量控制 */
+#define REG_PID_FLOW_KP_STR "PID_FLOW_KP"                           // 45507 - 流量控制 Kp (×100)
+#define REG_PID_FLOW_KI_STR "PID_FLOW_KI"                           // 45508 - 流量控制 Ki (×100)
+#define REG_PID_FLOW_KD_STR "PID_FLOW_KD"                           // 45509 - 流量控制 Kd (×100)
+
+/* PID 預設值恢復暫存器 */
+#define REG_RESTORE_DEFAULT_PID_TEMP_STR "RESTORE_DEFAULT_PID_TEMP"   // 45900 - 恢復溫度 PID 預設值
+#define REG_RESTORE_DEFAULT_PID_PRESS_STR "RESTORE_DEFAULT_PID_PRESS" // 45901 - 恢復壓力 PID 預設值
+#define REG_RESTORE_DEFAULT_PID_FLOW_STR "RESTORE_DEFAULT_PID_FLOW"   // 45902 - 恢復流量 PID 預設值
+
 /* 幫浦速度命令暫存器 */
 #define REG_PUMP1_SPEED_CMD_STR "PUMP1_SPEED_CMD" // 411037 - 幫浦1速度命令（重複定義）
 #define REG_PUMP2_SPEED_CMD_STR "PUMP2_SPEED_CMD" // 411039 - 幫浦2速度命令（重複定義）

@@ -61,7 +61,7 @@
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_1.json"
-#define CONFIG_REGISTER_LIST_SIZE 21  // 增加 P1 壓力感測器 + 2 個溫度限制寄存器 (46001, 46002)
+#define CONFIG_REGISTER_LIST_SIZE 26  // 增加 PID 參數寄存器 (45501-45503, 45900) + 原有 22 個
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 static const char *debug_tag = "ls80_1_temp";
@@ -150,10 +150,17 @@ static uint32_t REG_AUTO_START_STOP = 45020; // 自動啟停開關 (0=停用, 1=
 static uint32_t REG_VALVE_MANUAL_MODE = 45061; // 比例閥手動模式
 
 static uint32_t REG_VALVE_OPENING = 411151; // 比例閥開度設定 (%)
+static uint32_t REG_VALVE_STATE = 40047;    // 閥門狀態輸出值 (%)
 
 // 溫度限制暫存器 (HMI 可設定，斷電保持)
 static uint32_t REG_T_HIGH_ALARM = 46001;  // 最高溫度限制 (預設 50.0°C)
 static uint32_t REG_T_LOW_ALARM = 46002;   // 最低溫度限制 (預設 10.0°C)
+
+// PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
+static uint32_t REG_PID_TEMP_KP = 45501;              // 溫度控制 Kp (預設 1500 → 15.0)
+static uint32_t REG_PID_TEMP_KI = 45502;              // 溫度控制 Ki (預設 80 → 0.8)
+static uint32_t REG_PID_TEMP_KD = 45503;              // 溫度控制 Kd (預設 250 → 2.5)
+static uint32_t REG_RESTORE_DEFAULT_PID_TEMP = 45900; // 恢復 PID 預設值 (寫入 1 觸發)
 
 // 安全限制參數
 // 註: MAX_TEMP_LIMIT 和 MIN_TEMP_LIMIT 已改為從寄存器 46001/46002 讀取
@@ -201,6 +208,109 @@ static bool modbus_write_single_register(uint32_t address, uint16_t value) {
     int ret = control_logic_write_register(address, value, 2000);
 
     return (ret == SUCCESS)? true : false;
+}
+
+/**
+ * 從寄存器載入 PID 參數並應用到控制器
+ *
+ * 寄存器值精度為 ×100 (例如: 1500 → 15.0)
+ * 包含參數合理性檢查,超出範圍時使用邊界值
+ */
+static void load_pid_parameters_from_registers(void) {
+    // 讀取 PID 參數寄存器 (精度 ×100)
+    uint16_t kp_reg = modbus_read_input_register(REG_PID_TEMP_KP);
+    uint16_t ki_reg = modbus_read_input_register(REG_PID_TEMP_KI);
+    uint16_t kd_reg = modbus_read_input_register(REG_PID_TEMP_KD);
+
+    // 檢查寄存器是否有效 (非讀取失敗)
+    if (kp_reg == 0xFFFF || ki_reg == 0xFFFF || kd_reg == 0xFFFF) {
+        // 寄存器讀取失敗,保持當前參數
+        return;
+    }
+
+    // 轉換為實際值 (除以 100.0)
+    float kp = (float)kp_reg / 100.0f;
+    float ki = (float)ki_reg / 100.0f;
+    float kd = (float)kd_reg / 100.0f;
+
+    // 參數合理性檢查 (Kp: 1.0-50.0, Ki: 0.1-5.0, Kd: 0.0-10.0)
+    if (kp < 1.0f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過小,限制為 1.0", kp);
+        kp = 1.0f;
+    } else if (kp > 50.0f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過大,限制為 50.0", kp);
+        kp = 50.0f;
+    }
+
+    if (ki < 0.1f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過小,限制為 0.1", ki);
+        ki = 0.1f;
+    } else if (ki > 5.0f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過大,限制為 5.0", ki);
+        ki = 5.0f;
+    }
+
+    if (kd < 0.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 為負值,限制為 0.0", kd);
+        kd = 0.0f;
+    } else if (kd > 10.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 過大,限制為 10.0", kd);
+        kd = 10.0f;
+    }
+
+    // 檢查參數是否有變化 (容許 0.01 誤差)
+    bool changed = false;
+    if (fabsf(temperature_pid.kp - kp) > 0.01f ||
+        fabsf(temperature_pid.ki - ki) > 0.01f ||
+        fabsf(temperature_pid.kd - kd) > 0.01f) {
+        changed = true;
+    }
+
+    // 只在參數實際變更時更新並記錄
+    if (changed) {
+        info(debug_tag, "【PID參數更新】Kp=%.2f→%.2f, Ki=%.2f→%.2f, Kd=%.2f→%.2f",
+             temperature_pid.kp, kp, temperature_pid.ki, ki, temperature_pid.kd, kd);
+
+        temperature_pid.kp = kp;
+        temperature_pid.ki = ki;
+        temperature_pid.kd = kd;
+    }
+}
+
+/**
+ * 恢復 PID 參數為出廠預設值
+ *
+ * 使用邊緣觸發 (0→1) 檢測
+ * 預設值: Kp=15.0 (1500), Ki=0.8 (80), Kd=2.5 (250)
+ */
+static void restore_default_pid_parameters(void) {
+    static uint16_t previous_restore_flag = 0;
+
+    // 讀取恢復標誌
+    uint16_t current_restore_flag = modbus_read_input_register(REG_RESTORE_DEFAULT_PID_TEMP);
+
+    // 邊緣觸發檢測: 0→1
+    if (previous_restore_flag == 0 && current_restore_flag == 1) {
+        info(debug_tag, "【PID參數恢復】觸發恢復出廠預設值...");
+
+        // 寫入預設值到寄存器 (精度 ×100)
+        modbus_write_single_register(REG_PID_TEMP_KP, 1500);  // 15.0
+        modbus_write_single_register(REG_PID_TEMP_KI, 80);    // 0.8
+        modbus_write_single_register(REG_PID_TEMP_KD, 250);   // 2.5
+
+        // 直接更新 PID 控制器
+        temperature_pid.kp = 15.0f;
+        temperature_pid.ki = 0.8f;
+        temperature_pid.kd = 2.5f;
+
+        // 清除觸發標誌
+        modbus_write_single_register(REG_RESTORE_DEFAULT_PID_TEMP, 0);
+
+        info(debug_tag, "【PID參數恢復】已恢復為出廠預設值: Kp=15.0, Ki=0.8, Kd=2.5");
+    }
+
+    // 更新前次狀態
+    previous_restore_flag = current_restore_flag;
 }
 
 /**
@@ -324,10 +434,36 @@ static int _register_list_init(void)
     _control_logic_register_list[19].default_address = REG_T_LOW_ALARM,
     _control_logic_register_list[19].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[20].name = REG_P2_PRESSURE_STR;
-    _control_logic_register_list[20].address_ptr = &REG_P2_PRESSURE,
-    _control_logic_register_list[20].default_address = REG_P2_PRESSURE,
-    _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ;
+    // PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
+    _control_logic_register_list[20].name = REG_PID_TEMP_KP_STR;
+    _control_logic_register_list[20].address_ptr = &REG_PID_TEMP_KP,
+    _control_logic_register_list[20].default_address = REG_PID_TEMP_KP,
+    _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[21].name = REG_PID_TEMP_KI_STR;
+    _control_logic_register_list[21].address_ptr = &REG_PID_TEMP_KI,
+    _control_logic_register_list[21].default_address = REG_PID_TEMP_KI,
+    _control_logic_register_list[21].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[22].name = REG_PID_TEMP_KD_STR;
+    _control_logic_register_list[22].address_ptr = &REG_PID_TEMP_KD,
+    _control_logic_register_list[22].default_address = REG_PID_TEMP_KD,
+    _control_logic_register_list[22].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[23].name = REG_RESTORE_DEFAULT_PID_TEMP_STR;
+    _control_logic_register_list[23].address_ptr = &REG_RESTORE_DEFAULT_PID_TEMP,
+    _control_logic_register_list[23].default_address = REG_RESTORE_DEFAULT_PID_TEMP,
+    _control_logic_register_list[23].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[24].name = REG_P2_PRESSURE_STR;
+    _control_logic_register_list[24].address_ptr = &REG_P2_PRESSURE,
+    _control_logic_register_list[24].default_address = REG_P2_PRESSURE,
+    _control_logic_register_list[24].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[25].name = "REG_VALVE_STATE";
+    _control_logic_register_list[25].address_ptr = &REG_VALVE_STATE,
+    _control_logic_register_list[25].default_address = REG_VALVE_STATE,
+    _control_logic_register_list[25].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     // try to load register array from file
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
@@ -395,6 +531,54 @@ int control_logic_ls80_1_temperature_control_init(void)
         info(debug_tag, "【開機初始化】最低溫度限制已設置: %.1f°C (保留現有值)", temp_c);
     }
 
+    // 【需求D】設定 PID 參數預設值 (HMI 可修改，斷電保持，精度 ×100)
+    // 策略: 先讀取當前值，只在值為 0 或讀取失敗時才設置預設值
+
+    // 讀取 Kp 參數
+    uint16_t current_kp = modbus_read_input_register(REG_PID_TEMP_KP);
+    if (current_kp == 0 || current_kp == 0xFFFF) {
+        bool kp_success = modbus_write_single_register(REG_PID_TEMP_KP, 1500);  // 15.0
+        if (kp_success) {
+            info(debug_tag, "【開機初始化】設定 PID Kp 預設值: 15.0");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kp 失敗");
+        }
+    } else {
+        float kp = current_kp / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kp 已設置: %.2f (保留現有值)", kp);
+    }
+
+    // 讀取 Ki 參數
+    uint16_t current_ki = modbus_read_input_register(REG_PID_TEMP_KI);
+    if (current_ki == 0 || current_ki == 0xFFFF) {
+        bool ki_success = modbus_write_single_register(REG_PID_TEMP_KI, 80);    // 0.8
+        if (ki_success) {
+            info(debug_tag, "【開機初始化】設定 PID Ki 預設值: 0.8");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Ki 失敗");
+        }
+    } else {
+        float ki = current_ki / 100.0f;
+        info(debug_tag, "【開機初始化】PID Ki 已設置: %.2f (保留現有值)", ki);
+    }
+
+    // 讀取 Kd 參數
+    uint16_t current_kd = modbus_read_input_register(REG_PID_TEMP_KD);
+    if (current_kd == 0 || current_kd == 0xFFFF) {
+        bool kd_success = modbus_write_single_register(REG_PID_TEMP_KD, 250);   // 2.5
+        if (kd_success) {
+            info(debug_tag, "【開機初始化】設定 PID Kd 預設值: 2.5");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kd 失敗");
+        }
+    } else {
+        float kd = current_kd / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kd 已設置: %.2f (保留現有值)", kd);
+    }
+
+    // 初始化恢復標誌為 0
+    modbus_write_single_register(REG_RESTORE_DEFAULT_PID_TEMP, 0);
+
     return SUCCESS;
 }
 
@@ -436,6 +620,10 @@ int control_logic_ls80_1_temperature_control(ControlLogic *ptr) {
     // - REG_CONTROL_LOGIC_1_ENABLE (41001) = 1
     // - REG_TEMP_CONTROL_MODE (45009) = 1
     handle_auto_start_stop();
+
+    // 【PID參數管理】每個週期載入寄存器參數並檢查恢復請求
+    load_pid_parameters_from_registers();
+    restore_default_pid_parameters();
 
     // 【步驟0】檢測 enable 從 1 變為 0，觸發切換到手動模式
     uint16_t current_enable = modbus_read_input_register(REG_CONTROL_LOGIC_1_ENABLE);
@@ -816,7 +1004,11 @@ static int execute_automatic_control_mode(const sensor_data_t *data) {
     if (valve_manual_mode == 0) {
         // 自動模式: 使用 PID 計算結果設定比例閥開度
         modbus_write_single_register(REG_VALVE_OPENING, valve_value);
-        info(debug_tag, "自動控制 - PID輸出: %.1f%%, 當前溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度: %d%%",
+
+        // 同步寫入閥門狀態暫存器
+        modbus_write_single_register(REG_VALVE_STATE, valve_value);
+
+        info(debug_tag, "自動控制 - PID輸出: %.1f%%, 當前溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度: %d%% (已同步狀態)",
              pid_output, data->avg_outlet_temp, target_temp, valve_value);
     } else {
         // 手動模式: 不寫入 PID 計算結果,保持 HMI 手動設定值

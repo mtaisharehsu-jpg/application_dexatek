@@ -102,7 +102,7 @@
 static const char *debug_tag = "ls80_2_m_v01";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_2.json"
-#define CONFIG_REGISTER_LIST_SIZE 28  // 從 25 改為 28 (新增 3 個壓力停機保護寄存器)
+#define CONFIG_REGISTER_LIST_SIZE 32  // 新增 4 個 PID 參數寄存器 (45504-45506, 45901) + 原有 28 個
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 // ========== 系統控制 ==========
@@ -138,6 +138,12 @@ static uint32_t REG_P_LOW_ALARM = 46202;       // 最低壓力限制（預設 0.
 static uint32_t REG_P2_PRESS_HIGH_STOP = 46272;    // P2壓力過高停機閾值（預設 6.0 Bar）
 static uint32_t REG_P4_PRESS_LOW_STOP = 46273;     // P4壓力過低停機閾值（預設 0.3 Bar）
 static uint32_t REG_P2_P4_PRESS_STOP = 46274;      // (P2-P4)壓差停機閾值（預設 2.0 Bar）
+
+// ========== PID 參數暫存器（45xxx，HMI 可設定，斷電保持，精度 ×100）==========
+static uint32_t REG_PID_PRESS_KP = 45504;              // 壓力控制 Kp (預設 200 → 2.0)
+static uint32_t REG_PID_PRESS_KI = 45505;              // 壓力控制 Ki (預設 50 → 0.5)
+static uint32_t REG_PID_PRESS_KD = 45506;              // 壓力控制 Kd (預設 10 → 0.1)
+static uint32_t REG_RESTORE_DEFAULT_PID_PRESS = 45901; // 恢復 PID 預設值 (寫入 1 觸發)
 
 // ========== 主泵輪換相關寄存器（與 ls80_3.c 共享）==========
 static uint32_t REG_PUMP_SWITCH_HOUR = 45034;      // 主泵切換時數設定 (小時, 0=停用自動切換)
@@ -304,6 +310,109 @@ static uint16_t modbus_read_input_register(uint32_t address) {
 static bool modbus_write_single_register(uint32_t address, uint16_t value) {
     int ret = control_logic_write_register(address, value, 2000);
     return (ret == SUCCESS) ? true : false;
+}
+
+/**
+ * 從寄存器載入 PID 參數並應用到控制器
+ *
+ * 寄存器值精度為 ×100 (例如: 250 → 2.5)
+ * 包含參數合理性檢查,超出範圍時使用邊界值
+ */
+static void load_pressure_pid_parameters(void) {
+    // 讀取 PID 參數寄存器 (精度 ×100)
+    uint16_t kp_reg = modbus_read_input_register(REG_PID_PRESS_KP);
+    uint16_t ki_reg = modbus_read_input_register(REG_PID_PRESS_KI);
+    uint16_t kd_reg = modbus_read_input_register(REG_PID_PRESS_KD);
+
+    // 檢查寄存器是否有效 (非讀取失敗)
+    if (kp_reg == 0xFFFF || ki_reg == 0xFFFF || kd_reg == 0xFFFF) {
+        // 寄存器讀取失敗,保持當前參數
+        return;
+    }
+
+    // 轉換為實際值 (除以 100.0)
+    float kp = (float)kp_reg / 100.0f;
+    float ki = (float)ki_reg / 100.0f;
+    float kd = (float)kd_reg / 100.0f;
+
+    // 參數合理性檢查 (Kp: 0.5-10.0, Ki: 0.1-2.0, Kd: 0.0-5.0)
+    if (kp < 0.5f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過小,限制為 0.5", kp);
+        kp = 0.5f;
+    } else if (kp > 10.0f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過大,限制為 10.0", kp);
+        kp = 10.0f;
+    }
+
+    if (ki < 0.1f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過小,限制為 0.1", ki);
+        ki = 0.1f;
+    } else if (ki > 2.0f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過大,限制為 2.0", ki);
+        ki = 2.0f;
+    }
+
+    if (kd < 0.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 為負值,限制為 0.0", kd);
+        kd = 0.0f;
+    } else if (kd > 5.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 過大,限制為 5.0", kd);
+        kd = 5.0f;
+    }
+
+    // 檢查參數是否有變化 (容許 0.01 誤差)
+    bool changed = false;
+    if (fabsf(pressure_pid.kp - kp) > 0.01f ||
+        fabsf(pressure_pid.ki - ki) > 0.01f ||
+        fabsf(pressure_pid.kd - kd) > 0.01f) {
+        changed = true;
+    }
+
+    // 只在參數實際變更時更新並記錄
+    if (changed) {
+        info(debug_tag, "【PID參數更新】Kp=%.2f→%.2f, Ki=%.2f→%.2f, Kd=%.2f→%.2f",
+             pressure_pid.kp, kp, pressure_pid.ki, ki, pressure_pid.kd, kd);
+
+        pressure_pid.kp = kp;
+        pressure_pid.ki = ki;
+        pressure_pid.kd = kd;
+    }
+}
+
+/**
+ * 恢復 PID 參數為出廠預設值
+ *
+ * 使用邊緣觸發 (0→1) 檢測
+ * 預設值: Kp=2.5 (250), Ki=0.4 (40), Kd=0.8 (80)
+ */
+static void restore_default_pressure_pid(void) {
+    static uint16_t previous_restore_flag = 0;
+
+    // 讀取恢復標誌
+    uint16_t current_restore_flag = modbus_read_input_register(REG_RESTORE_DEFAULT_PID_PRESS);
+
+    // 邊緣觸發檢測: 0→1
+    if (previous_restore_flag == 0 && current_restore_flag == 1) {
+        info(debug_tag, "【PID參數恢復】觸發恢復出廠預設值...");
+
+        // 寫入預設值到寄存器 (精度 ×100)
+        modbus_write_single_register(REG_PID_PRESS_KP, 250);  // 2.5
+        modbus_write_single_register(REG_PID_PRESS_KI, 40);   // 0.4
+        modbus_write_single_register(REG_PID_PRESS_KD, 80);   // 0.8
+
+        // 直接更新 PID 控制器
+        pressure_pid.kp = 2.5f;
+        pressure_pid.ki = 0.4f;
+        pressure_pid.kd = 0.8f;
+
+        // 清除觸發標誌
+        modbus_write_single_register(REG_RESTORE_DEFAULT_PID_PRESS, 0);
+
+        info(debug_tag, "【PID參數恢復】已恢復為出廠預設值: Kp=2.5, Ki=0.4, Kd=0.8");
+    }
+
+    // 更新前次狀態
+    previous_restore_flag = current_restore_flag;
 }
 
 /**
@@ -601,6 +710,27 @@ static int _register_list_init(void)
     _control_logic_register_list[17].default_address = REG_P2_P4_PRESS_STOP;
     _control_logic_register_list[17].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
+    // PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
+    _control_logic_register_list[18].name = REG_PID_PRESS_KP_STR;
+    _control_logic_register_list[18].address_ptr = &REG_PID_PRESS_KP;
+    _control_logic_register_list[18].default_address = REG_PID_PRESS_KP;
+    _control_logic_register_list[18].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[19].name = REG_PID_PRESS_KI_STR;
+    _control_logic_register_list[19].address_ptr = &REG_PID_PRESS_KI;
+    _control_logic_register_list[19].default_address = REG_PID_PRESS_KI;
+    _control_logic_register_list[19].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[20].name = REG_PID_PRESS_KD_STR;
+    _control_logic_register_list[20].address_ptr = &REG_PID_PRESS_KD;
+    _control_logic_register_list[20].default_address = REG_PID_PRESS_KD;
+    _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[21].name = REG_RESTORE_DEFAULT_PID_PRESS_STR;
+    _control_logic_register_list[21].address_ptr = &REG_RESTORE_DEFAULT_PID_PRESS;
+    _control_logic_register_list[21].default_address = REG_RESTORE_DEFAULT_PID_PRESS;
+    _control_logic_register_list[21].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
     // 從配置檔案載入
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
@@ -773,6 +903,59 @@ int control_logic_ls80_2_pressure_control_init(void)
     }
 
     info(debug_tag, "【診斷】主泵選擇初始化完成");
+
+    // ========== 初始化 PID 參數預設值 (HMI 可修改，斷電保持，精度 ×100) ==========
+    info(debug_tag, "【診斷】開始初始化 PID 參數...");
+
+    // 讀取 Kp 參數
+    uint16_t current_kp = modbus_read_input_register(REG_PID_PRESS_KP);
+    if (current_kp == 0 || current_kp == 0xFFFF) {
+        modbus_write_single_register(REG_PID_PRESS_KP, 250);  // 2.5
+        uint16_t verify = modbus_read_input_register(REG_PID_PRESS_KP);
+        if (verify == 250) {
+            info(debug_tag, "【開機初始化】設定 PID Kp 預設值: 2.5 ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kp 失敗! 回讀值=%u", verify);
+        }
+    } else {
+        float kp = current_kp / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kp 已設置: %.2f (保留現有值) ✓", kp);
+    }
+
+    // 讀取 Ki 參數
+    uint16_t current_ki = modbus_read_input_register(REG_PID_PRESS_KI);
+    if (current_ki == 0 || current_ki == 0xFFFF) {
+        modbus_write_single_register(REG_PID_PRESS_KI, 40);   // 0.4
+        uint16_t verify = modbus_read_input_register(REG_PID_PRESS_KI);
+        if (verify == 40) {
+            info(debug_tag, "【開機初始化】設定 PID Ki 預設值: 0.4 ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Ki 失敗! 回讀值=%u", verify);
+        }
+    } else {
+        float ki = current_ki / 100.0f;
+        info(debug_tag, "【開機初始化】PID Ki 已設置: %.2f (保留現有值) ✓", ki);
+    }
+
+    // 讀取 Kd 參數
+    uint16_t current_kd = modbus_read_input_register(REG_PID_PRESS_KD);
+    if (current_kd == 0 || current_kd == 0xFFFF) {
+        modbus_write_single_register(REG_PID_PRESS_KD, 80);   // 0.8
+        uint16_t verify = modbus_read_input_register(REG_PID_PRESS_KD);
+        if (verify == 80) {
+            info(debug_tag, "【開機初始化】設定 PID Kd 預設值: 0.8 ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kd 失敗! 回讀值=%u", verify);
+        }
+    } else {
+        float kd = current_kd / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kd 已設置: %.2f (保留現有值) ✓", kd);
+    }
+
+    // 初始化恢復標誌為 0
+    modbus_write_single_register(REG_RESTORE_DEFAULT_PID_PRESS, 0);
+
+    info(debug_tag, "【診斷】PID 參數初始化完成");
 
     return ret;
 }
@@ -1742,6 +1925,10 @@ int control_logic_ls80_2_pressure_control(ControlLogic *ptr) {
 
     // 【步驟0】處理 AUTO_START_STOP 與 FLOW_MODE 聯動控制
     handle_auto_start_stop_and_flow_mode();
+
+    // 【PID參數管理】每個週期載入寄存器參數並檢查恢復請求
+    load_pressure_pid_parameters();
+    restore_default_pressure_pid();
 
     // 【步驟1】檢查控制邏輯2是否啟用，並偵測 1→0 轉換
     uint16_t current_enable = modbus_read_input_register(REG_CONTROL_LOGIC_2_ENABLE);
