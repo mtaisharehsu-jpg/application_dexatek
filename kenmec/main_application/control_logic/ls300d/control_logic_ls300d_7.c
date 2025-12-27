@@ -33,6 +33,9 @@
 #include "dexatek/main_application/include/application_common.h"
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
+// 前向聲明 modbus_manager 函數,避免包含完整 header 的編譯依賴
+extern int modbus_manager_data_mapping_save(void);
+
 static const char* debug_tag = "ls300d_7_2dc_pump";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_7.json"
@@ -327,6 +330,7 @@ static int _register_list_init(void)
     _control_logic_register_list[32].address_ptr = &PUMP2_RUNTIME_HOUR_REG;
     _control_logic_register_list[32].default_address = PUMP2_RUNTIME_HOUR_REG;
     _control_logic_register_list[32].type = CONTROL_LOGIC_REGISTER_READ;
+    //_control_logic_register_list[32].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     _control_logic_register_list[33].name = REG_PUMP2_RUNTIME_DAY_STR;
     _control_logic_register_list[33].address_ptr = &PUMP2_RUNTIME_DAY_REG;
@@ -839,8 +843,12 @@ static void update_pump_runtime(pump_runtime_tracker_t *tracker,
  * 1. 檢查並處理運轉時間歸零指令
  * 2. 更新 Pump1 和 Pump2 的運轉時間累積
  * 3. 每秒累積運轉時間，自動進位 (秒→分→時→天)
+ * 4. 定期儲存運轉時間到持久性儲存 (每 60 秒)
  */
 static void manage_all_pumps_runtime(void) {
+    // 靜態變數:追蹤上次儲存時間
+    static time_t last_save_time = 0;
+
     // 檢查並處理歸零指令
     check_and_reset_pump_runtime(PUMP1_RUNTIME_RESET_REG,
                                  PUMP1_RUNTIME_SEC_REG, PUMP1_RUNTIME_MIN_REG,
@@ -862,6 +870,21 @@ static void manage_all_pumps_runtime(void) {
                        PUMP2_RUNTIME_SEC_REG, PUMP2_RUNTIME_MIN_REG,
                        PUMP2_RUNTIME_HOUR_REG, PUMP2_RUNTIME_DAY_REG,
                        "Pump2");
+
+    // 定期儲存運轉時間到持久性儲存 (每 60 秒)
+    // 註:由於運轉時間是程式內部累積更新,不會觸發外部寫入的儲存回調
+    //    因此需要在這裡主動呼叫儲存函數以實現斷電保持功能
+    time_t current_time = time(NULL);
+    if (current_time - last_save_time >= 60) {
+        int save_ret = modbus_manager_data_mapping_save();
+        if (save_ret == SUCCESS) {
+            last_save_time = current_time;
+            info(debug_tag, "【運轉時間定期儲存】儲存成功 (間隔: %ld 秒)",
+                 current_time - last_save_time + 60);
+        } else {
+            error(debug_tag, "【運轉時間定期儲存】儲存失敗, ret = %d", save_ret);
+        }
+    }
 }
 
 /*---------------------------------------------------------------------------

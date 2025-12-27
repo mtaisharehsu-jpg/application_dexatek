@@ -1,24 +1,23 @@
 /*
  * control_logic_ls300d_5.c - LS300D 補水泵控制邏輯 (Control Logic 5: Water Pump Control)
  *
- * 【LS300D 特點】
- * LS300D 機種使用「中液位停止」策略,與 LS80 的「高液位停止」不同。
- * 中液位停止可以避免過度補水,同時保留高液位作為溢流保護。
+ * 【LS300D 更新說明】
+ * LS300D 機種已改為使用「高液位停止」策略,與 LS80 一致。
+ * (原「中液位停止」策略已停用,但保留中液位寄存器定義以維持相容性)
  *
  * 【功能概述】
  * 本模組實現 CDU 系統的補水泵控制功能,根據水箱液位和壓力自動補水,維持系統水位與壓力穩定。
  * 支援手動/自動模式,並提供完整的液位監控、壓力監控、安全保護和故障處理機制。
  *
  * 【控制目標】
- * - 維持水箱液位在中液位附近 (LS300D 特性)
+ * - 維持水箱液位在高液位以下
  * - 維持系統壓力在目標壓力以上
- * - 低液位或低壓力觸發補水 → 運行至中液位或目標壓力 → 停止補水
- * - 高液位作為溢流保護,到達高液位時強制停止
+ * - 低液位或低壓力觸發補水 → 運行至高液位或目標壓力 → 停止補水
  * - 防止過度補水和缺水
  *
  * 【感測器配置 - LS300D】
- * - 高液位檢測 (REG 411015): DI_3, 1=有液位, 0=無液位 (溢流保護)
- * - 中液位檢測 (REG 411016): DI_4, 1=有液位, 0=無液位 (正常停止點)
+ * - 高液位檢測 (REG 411015): DI_3, 1=有液位, 0=無液位 (正常停止點)
+ * - 中液位檢測 (REG 411016): DI_4, 1=有液位, 0=無液位 (已停用,保留相容性)
  * - 低液位檢測 (REG 411114): DI_5, 1=有液位, 0=無液位 (啟動點)
  * - 漏液檢測 (REG 411013): DI_6, 1=漏液, 0=正常
  * - 系統狀態 (REG 42001): bit7=異常標誌
@@ -91,9 +90,9 @@ static uint32_t REG_CONTROL_LOGIC_5_ENABLE = 41005; // 控制邏輯5啟用
 
 static uint32_t REG_WATER_PUMP_CONTROL = 411007;   // 補水泵啟停控制 (0=Stop, 1=Run)
 
-// 液位檢測寄存器 (LS300D 三液位設計)
-static uint32_t REG_HIGH_LEVEL = 411015;   // CDU水箱_高液位檢 (0=無液位, 1=有液位, 溢流保護)
-static uint32_t REG_MID_LEVEL = 411016;    // CDU水箱_中液位檢 (0=無液位, 1=有液位, 正常停止點)
+// 液位檢測寄存器 (LS300D 三液位設計,已改為高液位停止)
+static uint32_t REG_HIGH_LEVEL = 411015;   // CDU水箱_高液位檢 (0=無液位, 1=有液位, 正常停止點)
+static uint32_t REG_MID_LEVEL = 411016;    // CDU水箱_中液位檢 (0=無液位, 1=有液位, 已停用但保留定義)
 static uint32_t REG_LOW_LEVEL = 411114;    // CDU水箱_低液位檢 (0=無液位, 1=有液位, 啟動點)
 static uint32_t REG_LEAK_DETECTION = 411013;   // 漏液檢 (0=正常, 1=漏液)
 static uint32_t REG_SYSTEM_STATUS = 42001;    // 機組狀態 (bit8:液位狀態)
@@ -154,11 +153,11 @@ typedef struct {
     uint32_t max_fail_count;      // 最大失敗次數
 } water_pump_config_t;
 
-// 補水泵狀態 (LS300D 三液位設計)
+// 補水泵狀態 (LS300D 三液位設計,已改為高液位停止)
 typedef struct {
     bool is_running;              // 補水泵是否運行
-    bool high_level;              // 高液位狀態 (溢流保護)
-    bool mid_level;               // 中液位狀態 (正常停止點, LS300D 特性)
+    bool high_level;              // 高液位狀態 (正常停止點)
+    bool mid_level;               // 中液位狀態 (已停用,保留欄位相容性)
     bool low_level;               // 低液位狀態 (啟動點)
     bool leak_detected;           // 漏液檢測
     bool system_normal;           // 系統正常
@@ -382,17 +381,20 @@ static bool check_safety_conditions(water_pump_status_t* status) {
         return false;
     }
 
-    // 檢查高液位 (溢流保護 - 最高優先級)
+    // 檢查高液位 (正常停止點 - 與 LS80 一致)
     if (status->high_level) {
-        warn(tag, "Safety check failed: High level reached (overflow protection)");
+        debug(tag, "Safety check failed: High level reached (normal stop point)");
         return false;
     }
 
-    // 檢查中液位 (LS300D 正常停止點)
+    // LS300D 原「中液位停止」邏輯已停用 (改為高液位停止,與 LS80 一致)
+    // 保留中液位讀取,但不作為停止條件
+    /*
     if (status->mid_level) {
         debug(tag, "Safety check failed: Mid level already reached (LS300D target)");
         return false;
     }
+    */
 
     return true;
 }
@@ -474,12 +476,15 @@ static void execute_manual_control(water_pump_controller_t* controller) {
         }
 
         if (status->high_level) {
-            warn(tag, "Manual mode: High level reached (overflow) - recommend stopping pump immediately");
+            info(tag, "Manual mode: High level reached (normal stop point) - recommend stopping pump");
         }
 
+        // LS300D 原「中液位停止」建議已停用
+        /*
         if (status->mid_level) {
             info(tag, "Manual mode: Mid level reached (LS300D target) - recommend stopping pump");
         }
+        */
 
         debug(tag, "Manual mode: Pump running - monitoring");
     } else {
@@ -495,17 +500,17 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
     switch (controller->pump_state) {
         case WATER_PUMP_STATE_IDLE: {
             // 檢查是否需要開始補水
-            // LS300D 觸發條件: (低液位 OR 壓力低於目標) AND 未達中液位 AND 未達高液位
+            // LS300D 觸發條件: (低液位 OR 壓力低於目標) AND 未達高液位 (與 LS80 一致)
             bool need_water_fill = false;
 
-            // 條件 1: 低液位觸發 (無低液位且未達中液位)
-            if (!status->low_level && !status->mid_level && !status->high_level) {
+            // 條件 1: 低液位觸發 (無低液位且未達高液位)
+            if (!status->low_level && !status->high_level) {
                 need_water_fill = true;
                 debug(tag, "Auto mode: Low level detected (no water), need water fill");
             }
 
-            // 條件 2: 壓力低於目標觸發 (未達中液位和高液位)
-            if (status->current_pressure < config->target_pressure && !status->mid_level && !status->high_level) {
+            // 條件 2: 壓力低於目標觸發 (未達高液位)
+            if (status->current_pressure < config->target_pressure && !status->high_level) {
                 need_water_fill = true;
                 info(tag, "Auto mode: Pressure %.2f bar < target %.2f bar, need water fill",
                      status->current_pressure, config->target_pressure);
@@ -550,15 +555,20 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
                 break;
             }
 
-            // 檢查高液位 (溢流保護 - 最高優先級,立即停止)
+            // 檢查是否達到高液位 (正常停止點 - 與 LS80 一致)
             if (status->high_level) {
-                warn(tag, "Auto mode: High level reached (OVERFLOW PROTECTION), emergency stop!");
-                stop_water_pump(controller);
-                controller->pump_state = WATER_PUMP_STATE_ERROR;
+                if (confirm_level_status(status)) {
+                    info(tag, "Auto mode: High level reached (normal stop point), stopping pump");
+                    stop_water_pump(controller);
+                    controller->pump_state = WATER_PUMP_STATE_COMPLETED;
+                    status->start_time_ms = current_time_ms;
+                    status->level_confirmed = false;
+                }
                 break;
             }
 
-            // 檢查是否達到中液位 (LS300D 正常停止點)
+            // LS300D 原「中液位停止」邏輯已停用 (改為高液位停止,與 LS80 一致)
+            /*
             if (status->mid_level) {
                 if (confirm_level_status(status)) {
                     info(tag, "Auto mode: Mid level reached (LS300D target), stopping pump");
@@ -569,6 +579,7 @@ static void execute_auto_control(water_pump_controller_t* controller, uint32_t c
                 }
                 break;
             }
+            */
 
             // 檢查是否達到目標壓力
             if (status->current_pressure >= config->target_pressure) {

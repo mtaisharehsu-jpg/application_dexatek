@@ -64,7 +64,7 @@
 static const char *debug_tag = "ls300d_3_flow";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_3.json"
-#define CONFIG_REGISTER_LIST_SIZE 25
+#define CONFIG_REGISTER_LIST_SIZE 29  // 新增 4 個 PID 參數寄存器 (45507-45509, 45902) + 原有 25 個
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 // 顯示時間持久化配置
@@ -85,6 +85,12 @@ static uint32_t REG_TARGET_FLOW = 45003;   // 目標流量設定 (F_set)
 static uint32_t REG_FLOW_MODE = 45005;   // 流量/壓差模式選擇 (0=流量模式)
 static uint32_t REG_FLOW_HIGH_LIMIT = 46401;   // 流量上限 (HMI 可設定,斷電保持)
 static uint32_t REG_FLOW_LOW_LIMIT = 46402;   // 流量下限 (HMI 可設定,斷電保持)
+
+// PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
+static uint32_t REG_PID_FLOW_KP = 45507;              // 流量控制 Kp (預設 250 → 2.5)
+static uint32_t REG_PID_FLOW_KI = 45508;              // 流量控制 Ki (預設 40 → 0.4)
+static uint32_t REG_PID_FLOW_KD = 45509;              // 流量控制 Kd (預設 80 → 0.8)
+static uint32_t REG_RESTORE_DEFAULT_PID_FLOW = 45902; // 恢復 PID 預設值 (寫入 1 觸發)
 
 static uint32_t REG_PUMP1_SPEED = 45015;  // Pump1速度設定 (0-1000)
 static uint32_t REG_PUMP2_SPEED = 45016;  // Pump2速度設定
@@ -255,6 +261,8 @@ static void update_display_auto_time(void);
 static void check_and_switch_primary_pump(void);
 static int save_display_time_to_file(void);
 static int restore_display_time_from_file(void);
+static void load_flow_pid_parameters(void);
+static void restore_default_flow_pid(void);
 //static float calculate_valve_adjustment(float pid_output, const flow_sensor_data_t *data);
 
 /*---------------------------------------------------------------------------
@@ -276,6 +284,109 @@ static bool modbus_write_single_register(uint32_t address, uint16_t value) {
     int ret = control_logic_write_register(address, value, 2000);
 
     return (ret == SUCCESS)? true : false;
+}
+
+/**
+ * 從寄存器載入 PID 參數並應用到控制器
+ *
+ * 寄存器值精度為 ×100 (例如: 250 → 2.5)
+ * 包含參數合理性檢查,超出範圍時使用邊界值
+ */
+static void load_flow_pid_parameters(void) {
+    // 讀取 PID 參數寄存器 (精度 ×100)
+    uint16_t kp_reg = modbus_read_input_register(REG_PID_FLOW_KP);
+    uint16_t ki_reg = modbus_read_input_register(REG_PID_FLOW_KI);
+    uint16_t kd_reg = modbus_read_input_register(REG_PID_FLOW_KD);
+
+    // 檢查寄存器是否有效 (非讀取失敗)
+    if (kp_reg == 0xFFFF || ki_reg == 0xFFFF || kd_reg == 0xFFFF) {
+        // 寄存器讀取失敗,保持當前參數
+        return;
+    }
+
+    // 轉換為實際值 (除以 100.0)
+    float kp = (float)kp_reg / 100.0f;
+    float ki = (float)ki_reg / 100.0f;
+    float kd = (float)kd_reg / 100.0f;
+
+    // 參數合理性檢查 (Kp: 0.5-10.0, Ki: 0.1-2.0, Kd: 0.0-5.0)
+    if (kp < 0.5f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過小,限制為 0.5", kp);
+        kp = 0.5f;
+    } else if (kp > 10.0f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過大,限制為 10.0", kp);
+        kp = 10.0f;
+    }
+
+    if (ki < 0.1f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過小,限制為 0.1", ki);
+        ki = 0.1f;
+    } else if (ki > 2.0f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過大,限制為 2.0", ki);
+        ki = 2.0f;
+    }
+
+    if (kd < 0.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 為負值,限制為 0.0", kd);
+        kd = 0.0f;
+    } else if (kd > 5.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 過大,限制為 5.0", kd);
+        kd = 5.0f;
+    }
+
+    // 檢查參數是否有變化 (容許 0.01 誤差)
+    bool changed = false;
+    if (fabsf(flow_pid.kp - kp) > 0.01f ||
+        fabsf(flow_pid.ki - ki) > 0.01f ||
+        fabsf(flow_pid.kd - kd) > 0.01f) {
+        changed = true;
+    }
+
+    // 只在參數實際變更時更新並記錄
+    if (changed) {
+        info(debug_tag, "【PID參數更新】Kp=%.2f→%.2f, Ki=%.2f→%.2f, Kd=%.2f→%.2f",
+             flow_pid.kp, kp, flow_pid.ki, ki, flow_pid.kd, kd);
+
+        flow_pid.kp = kp;
+        flow_pid.ki = ki;
+        flow_pid.kd = kd;
+    }
+}
+
+/**
+ * 恢復 PID 參數為出廠預設值
+ *
+ * 使用邊緣觸發 (0→1) 檢測
+ * 預設值: Kp=2.5 (250), Ki=0.4 (40), Kd=0.8 (80)
+ */
+static void restore_default_flow_pid(void) {
+    static uint16_t previous_restore_flag = 0;
+
+    // 讀取恢復標誌
+    uint16_t current_restore_flag = modbus_read_input_register(REG_RESTORE_DEFAULT_PID_FLOW);
+
+    // 邊緣觸發檢測: 0→1
+    if (previous_restore_flag == 0 && current_restore_flag == 1) {
+        info(debug_tag, "【PID參數恢復】觸發恢復出廠預設值...");
+
+        // 寫入預設值到寄存器 (精度 ×100)
+        modbus_write_single_register(REG_PID_FLOW_KP, 250);  // 2.5
+        modbus_write_single_register(REG_PID_FLOW_KI, 40);   // 0.4
+        modbus_write_single_register(REG_PID_FLOW_KD, 80);   // 0.8
+
+        // 直接更新 PID 控制器
+        flow_pid.kp = 2.5f;
+        flow_pid.ki = 0.4f;
+        flow_pid.kd = 0.8f;
+
+        // 清除觸發標誌
+        modbus_write_single_register(REG_RESTORE_DEFAULT_PID_FLOW, 0);
+
+        info(debug_tag, "【PID參數恢復】已恢復為出廠預設值: Kp=2.5, Ki=0.4, Kd=0.8");
+    }
+
+    // 更新前次狀態
+    previous_restore_flag = current_restore_flag;
 }
 
 /**
@@ -567,6 +678,39 @@ static int _register_list_init(void)
     _control_logic_register_list[22].default_address = REG_CURRENT_PRIMARY_AUTO_MINUTES;
     _control_logic_register_list[22].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
+    // PID 參數寄存器 (HMI 可設定，斷電保持)
+    _control_logic_register_list[23].name = REG_PID_FLOW_KP_STR;
+    _control_logic_register_list[23].address_ptr = &REG_PID_FLOW_KP;
+    _control_logic_register_list[23].default_address = REG_PID_FLOW_KP;
+    _control_logic_register_list[23].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[24].name = REG_PID_FLOW_KI_STR;
+    _control_logic_register_list[24].address_ptr = &REG_PID_FLOW_KI;
+    _control_logic_register_list[24].default_address = REG_PID_FLOW_KI;
+    _control_logic_register_list[24].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[25].name = REG_PID_FLOW_KD_STR;
+    _control_logic_register_list[25].address_ptr = &REG_PID_FLOW_KD;
+    _control_logic_register_list[25].default_address = REG_PID_FLOW_KD;
+    _control_logic_register_list[25].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[26].name = REG_RESTORE_DEFAULT_PID_FLOW_STR;
+    _control_logic_register_list[26].address_ptr = &REG_RESTORE_DEFAULT_PID_FLOW;
+    _control_logic_register_list[26].default_address = REG_RESTORE_DEFAULT_PID_FLOW;
+    _control_logic_register_list[26].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // AUTO_START_STOP 寄存器
+    _control_logic_register_list[27].name = REG_AUTO_START_STOP_STR;
+    _control_logic_register_list[27].address_ptr = &REG_AUTO_START_STOP;
+    _control_logic_register_list[27].default_address = REG_AUTO_START_STOP;
+    _control_logic_register_list[27].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // CONTROL_LOGIC_2_ENABLE 寄存器
+    _control_logic_register_list[28].name = REG_CONTROL_LOGIC_2_ENABLE_STR;
+    _control_logic_register_list[28].address_ptr = &REG_CONTROL_LOGIC_2_ENABLE;
+    _control_logic_register_list[28].default_address = REG_CONTROL_LOGIC_2_ENABLE;
+    _control_logic_register_list[28].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
     debug(debug_tag, "load register array from file %s, ret %d", CONFIG_REGISTER_FILE_PATH, ret);
@@ -663,6 +807,59 @@ int control_logic_ls300d_3_flow_control_init(void)
     }
 
     info(debug_tag, "【診斷】顯示時間初始化完成");
+
+    // ========== 初始化 PID 參數預設值 (HMI 可修改，斷電保持，精度 ×100) ==========
+    info(debug_tag, "【診斷】開始初始化 PID 參數...");
+
+    // 讀取 Kp 參數
+    uint16_t current_kp = modbus_read_input_register(REG_PID_FLOW_KP);
+    if (current_kp == 0 || current_kp == 0xFFFF) {
+        modbus_write_single_register(REG_PID_FLOW_KP, 250);  // 2.5
+        uint16_t verify = modbus_read_input_register(REG_PID_FLOW_KP);
+        if (verify == 250) {
+            info(debug_tag, "【開機初始化】設定 PID Kp 預設值: 2.5 ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kp 失敗! 回讀值=%u", verify);
+        }
+    } else {
+        float kp = current_kp / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kp 已設置: %.2f (保留現有值) ✓", kp);
+    }
+
+    // 讀取 Ki 參數
+    uint16_t current_ki = modbus_read_input_register(REG_PID_FLOW_KI);
+    if (current_ki == 0 || current_ki == 0xFFFF) {
+        modbus_write_single_register(REG_PID_FLOW_KI, 40);   // 0.4
+        uint16_t verify = modbus_read_input_register(REG_PID_FLOW_KI);
+        if (verify == 40) {
+            info(debug_tag, "【開機初始化】設定 PID Ki 預設值: 0.4 ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Ki 失敗! 回讀值=%u", verify);
+        }
+    } else {
+        float ki = current_ki / 100.0f;
+        info(debug_tag, "【開機初始化】PID Ki 已設置: %.2f (保留現有值) ✓", ki);
+    }
+
+    // 讀取 Kd 參數
+    uint16_t current_kd = modbus_read_input_register(REG_PID_FLOW_KD);
+    if (current_kd == 0 || current_kd == 0xFFFF) {
+        modbus_write_single_register(REG_PID_FLOW_KD, 80);   // 0.8
+        uint16_t verify = modbus_read_input_register(REG_PID_FLOW_KD);
+        if (verify == 80) {
+            info(debug_tag, "【開機初始化】設定 PID Kd 預設值: 0.8 ✓");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kd 失敗! 回讀值=%u", verify);
+        }
+    } else {
+        float kd = current_kd / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kd 已設置: %.2f (保留現有值) ✓", kd);
+    }
+
+    // 初始化恢復標誌為 0
+    modbus_write_single_register(REG_RESTORE_DEFAULT_PID_FLOW, 0);
+
+    info(debug_tag, "【診斷】PID 參數初始化完成");
 
     return ret;
 }
@@ -819,6 +1016,12 @@ int control_logic_ls300d_3_flow_control(ControlLogic *ptr) {
     flow_safety_status_t safety_status;
     int control_mode;
     int ret = 0;
+
+    // 從寄存器載入 PID 參數 (HMI 可設定)
+    load_flow_pid_parameters();
+
+    // 檢查是否需要恢復 PID 預設值
+    restore_default_flow_pid();
 
     info(debug_tag, "=== CDU流量控制系統執行 (v3.1) ===");
 
