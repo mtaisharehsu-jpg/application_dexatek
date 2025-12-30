@@ -353,6 +353,14 @@ static int _register_list_init(void)
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
     debug(debug_tag, "load register array from file %s, ret %d", CONFIG_REGISTER_FILE_PATH, ret);
 
+    // 診斷日誌:追蹤暫存器地址變數
+    info(debug_tag, "=== 暫存器初始化檢查 ===");
+    info(debug_tag, "PUMP1_RUNTIME_HOUR_REG 地址 = %d", PUMP1_RUNTIME_HOUR_REG);
+    info(debug_tag, "PUMP2_RUNTIME_SEC_REG 地址 = %d", PUMP2_RUNTIME_SEC_REG);
+    info(debug_tag, "PUMP2_RUNTIME_MIN_REG 地址 = %d", PUMP2_RUNTIME_MIN_REG);
+    info(debug_tag, "PUMP2_RUNTIME_HOUR_REG 地址 = %d", PUMP2_RUNTIME_HOUR_REG);
+    info(debug_tag, "PUMP2_RUNTIME_DAY_REG 地址 = %d", PUMP2_RUNTIME_DAY_REG);
+
     return ret;
 }
 
@@ -848,6 +856,23 @@ static void update_pump_runtime(pump_runtime_tracker_t *tracker,
 static void manage_all_pumps_runtime(void) {
     // 靜態變數:追蹤上次儲存時間
     static time_t last_save_time = 0;
+
+    // 診斷日誌:首次啟動時讀取並記錄運轉時間
+    static bool first_run = true;
+    if (first_run) {
+        uint16_t p1_hour = modbus_read_input_register(PUMP1_RUNTIME_HOUR_REG);
+        uint16_t p1_min = modbus_read_input_register(PUMP1_RUNTIME_MIN_REG);
+        uint16_t p1_sec = modbus_read_input_register(PUMP1_RUNTIME_SEC_REG);
+
+        uint16_t p2_hour = modbus_read_input_register(PUMP2_RUNTIME_HOUR_REG);
+        uint16_t p2_min = modbus_read_input_register(PUMP2_RUNTIME_MIN_REG);
+        uint16_t p2_sec = modbus_read_input_register(PUMP2_RUNTIME_SEC_REG);
+
+        info(debug_tag, "=== 首次讀取運轉時間 (重開機後) ===");
+        info(debug_tag, "PUMP1: %d 時 %d 分 %d 秒", p1_hour, p1_min, p1_sec);
+        info(debug_tag, "PUMP2: %d 時 %d 分 %d 秒", p2_hour, p2_min, p2_sec);
+        first_run = false;
+    }
 
     // 檢查並處理歸零指令
     check_and_reset_pump_runtime(PUMP1_RUNTIME_RESET_REG,
