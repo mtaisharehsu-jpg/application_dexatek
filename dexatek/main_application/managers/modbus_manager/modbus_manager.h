@@ -470,12 +470,14 @@ static const uint16_t _MODBUS_DATA_KEEP_LIST[] = {
     1005,
     1006,
     1007,
-    2161, 
+    2161,
     2162,
     2163,
     2164,
     2165,
     2166,
+    2167,  // 修正: 加入 PUMP2_RUNTIME_HOUR (42167) 到斷電保持列表
+    2168,  // 修正: 加入 PUMP2_RUNTIME_DAY (42168) 到斷電保持列表
     MODBUS_ADDRESS_RTC_YEAR,
     MODBUS_ADDRESS_RTC_MONTH,
     MODBUS_ADDRESS_RTC_DAY,
