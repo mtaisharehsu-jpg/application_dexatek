@@ -475,6 +475,14 @@ static void execute_manual_control(water_pump_controller_t* controller) {
             info(tag, "Semi-auto mode: Target pressure reached (%.2f >= %.2f bar), auto-stopping and switching to auto mode",
                  status->current_pressure, controller->config.target_pressure);
             write_pump_control(false);
+
+            // 新增：重置失敗次數（半自動補水成功視為問題已解決）
+            if (controller->status.current_fail_count > 0) {
+                controller->status.current_fail_count = 0;
+                write_fail_count(0);
+                info(tag, "Semi-auto mode: Fail count reset to 0 after successful water filling");
+            }
+
             // 新增：停止後自動切換到自動模式
             write_holding_register(REG_WATER_PUMP_MANUAL_MODE, 0);
             info(tag, "Semi-auto mode: Switched to auto mode after pressure target reached");
