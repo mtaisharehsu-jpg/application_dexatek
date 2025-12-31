@@ -83,10 +83,10 @@ static uint32_t PUMP1_RUNTIME_MIN_REG = 42162;   // Pump1 運轉時間 - 分 (0-
 static uint32_t PUMP1_RUNTIME_HOUR_REG = 42163;  // Pump1 運轉時間 - 時 (0-23)
 static uint32_t PUMP1_RUNTIME_DAY_REG = 42164;   // Pump1 運轉時間 - 天 (累積)
 
-static uint32_t PUMP2_RUNTIME_SEC_REG = 42165;   // Pump2 運轉時間 - 秒 (0-59)
-static uint32_t PUMP2_RUNTIME_MIN_REG = 42166;   // Pump2 運轉時間 - 分 (0-59)
-static uint32_t PUMP2_RUNTIME_HOUR_REG = 42167;  // Pump2 運轉時間 - 時 (0-23) 2167
-static uint32_t PUMP2_RUNTIME_DAY_REG = 42168;   // Pump2 運轉時間 - 天 (累積)  2168
+static uint32_t PUMP2_RUNTIME_SEC_REG = 46035;   // Pump2 運轉時間 - 秒 (0-59) [修正:改用 46035 避開重開機歸零問題]
+static uint32_t PUMP2_RUNTIME_MIN_REG = 46036;   // Pump2 運轉時間 - 分 (0-59) [修正:改用 46036 避開重開機歸零問題]
+static uint32_t PUMP2_RUNTIME_HOUR_REG = 46037;  // Pump2 運轉時間 - 時 (0-23) [修正:改用 46037 避開 42167 重開機歸零問題]
+static uint32_t PUMP2_RUNTIME_DAY_REG = 46038;   // Pump2 運轉時間 - 天 (累積)  [修正:改用 46038 避開 42168 重開機歸零問題]
 
 // 運轉時間歸零控制寄存器
 static uint32_t PUMP1_RUNTIME_RESET_REG = 45041; // Pump1 運轉時間歸零 (避免與 REG_PUMP2_USE 衝突)
