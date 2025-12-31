@@ -82,13 +82,14 @@
 static const char* tag = "ls300d_5_waterpump";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_5.json"
-#define CONFIG_REGISTER_LIST_SIZE 16  // 增加 1 個寄存器 (MID_LEVEL)
+#define CONFIG_REGISTER_LIST_SIZE 17  // 增加 1 個寄存器 (MANUAL_MODE)
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
 // 補水泵控制寄存器
 static uint32_t REG_CONTROL_LOGIC_5_ENABLE = 41005; // 控制邏輯5啟用
 
 static uint32_t REG_WATER_PUMP_CONTROL = 411007;   // 補水泵啟停控制 (0=Stop, 1=Run)
+static uint32_t REG_WATER_PUMP_MANUAL_MODE = 45050; // 補水泵手動模式 (0=自動, 1=半自動)
 
 // 液位檢測寄存器 (LS300D 三液位設計,已改為高液位停止)
 static uint32_t REG_HIGH_LEVEL = 411015;   // CDU水箱_高液位檢 (0=無液位, 1=有液位, 正常停止點)
@@ -463,32 +464,64 @@ static void handle_pump_timeout(water_pump_controller_t* controller) {
 // 控制邏輯實現
 // ========================================================================================
 
-// 手動控制模式 (LS300D 版本)
+// 手動控制模式 (LS300D 版本) - 半自動補水模式
 static void execute_manual_control(water_pump_controller_t* controller) {
-    // 手動模式下主要進行監控，實際控制由外部 HMI 或 SCADA 系統進行
     water_pump_status_t* status = &controller->status;
 
-    // 監控補水泵狀態
+    // 讀取 HMI 命令 (LS300D: 0=運行, 1=停止)
+    uint16_t manual_cmd = read_holding_register(REG_WATER_PUMP_CONTROL);
+
+    // 根據命令控制補水泵 (注意 LS300D 的反轉邏輯)
+    if (manual_cmd == 1 && status->is_running) {
+        // HMI 命令停止 (LS300D: 1=停止)
+        write_pump_control(false);
+        info(tag, "Semi-auto mode: HMI command STOP");
+    } else if (manual_cmd == 0 && !status->is_running) {
+        // HMI 命令啟動 (LS300D: 0=運行)
+        if (!check_safety_conditions(status)) {
+            warn(tag, "Semi-auto mode: Safety check failed, cannot start");
+            return;
+        }
+        write_pump_control(true);
+        info(tag, "Semi-auto mode: HMI command START");
+    }
+
+    // 安全監控
     if (status->is_running) {
-        // 檢查是否需要停止（安全檢查）
+        // 【核心新功能】檢查壓力是否達標，自動停止並清除失敗次數
+        if (status->current_pressure >= controller->config.target_pressure) {
+            info(tag, "Semi-auto mode: Target pressure reached (%.1f >= %.1f bar), auto-stopping and switching to auto mode",
+                 status->current_pressure, controller->config.target_pressure);
+            write_pump_control(false);
+
+            // 重置失敗次數（半自動補水成功視為問題已解決）
+            if (controller->status.current_fail_count > 0) {
+                controller->status.current_fail_count = 0;
+                write_fail_count(0);
+                info(tag, "Semi-auto mode: Fail count reset to 0 after successful water filling");
+            }
+
+            // 自動切換回自動模式
+            write_holding_register(REG_WATER_PUMP_MANUAL_MODE, 0);
+            info(tag, "Semi-auto mode: Switched to auto mode after pressure target reached");
+        }
+
+        // 其他安全檢查
         if (status->leak_detected) {
-            warn(tag, "Manual mode: Leak detected - recommend stopping pump");
+            warn(tag, "Semi-auto mode: Leak detected - recommend stopping pump");
         }
-
+        if (!status->system_normal) {
+            warn(tag, "Semi-auto mode: System abnormal - recommend stopping pump");
+        }
         if (status->high_level) {
-            info(tag, "Manual mode: High level reached (normal stop point) - recommend stopping pump");
+            info(tag, "Semi-auto mode: High level reached");
         }
 
-        // LS300D 原「中液位停止」建議已停用
-        /*
-        if (status->mid_level) {
-            info(tag, "Manual mode: Mid level reached (LS300D target) - recommend stopping pump");
-        }
-        */
-
-        debug(tag, "Manual mode: Pump running - monitoring");
+        debug(tag, "Semi-auto mode: Pump running - pressure=%.1f/%.1f bar, high_level=%d",
+              status->current_pressure, controller->config.target_pressure, status->high_level);
     } else {
-        debug(tag, "Manual mode: Pump stopped - monitoring");
+        debug(tag, "Semi-auto mode: Pump stopped - pressure=%.1f bar, high_level=%d",
+              status->current_pressure, status->high_level);
     }
 }
 
@@ -734,6 +767,11 @@ static int _register_list_init(void)
     _control_logic_register_list[14].default_address = REG_CURRENT_FAIL_COUNT;
     _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ;
 
+    _control_logic_register_list[15].name = "WATER_PUMP_MANUAL_MODE";
+    _control_logic_register_list[15].address_ptr = &REG_WATER_PUMP_MANUAL_MODE;
+    _control_logic_register_list[15].default_address = 45050;
+    _control_logic_register_list[15].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
     // try to load register array from file
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
@@ -827,10 +865,15 @@ int control_logic_ls300d_5_waterpump_control(ControlLogic *ptr) {
         _water_pump_controller.comm_error_count++;
         return -1;
     }
-    
+
+    // 讀取半自動模式開關,動態決定控制模式
+    uint16_t manual_mode = read_holding_register(REG_WATER_PUMP_MANUAL_MODE);
+    water_pump_mode_t water_pump_mode = (manual_mode != 0) ?
+        WATER_PUMP_MODE_MANUAL : WATER_PUMP_MODE_AUTO;
+
     // 根據控制模式執行對應邏輯
-    if (_water_pump_controller.control_mode == WATER_PUMP_MODE_MANUAL) {
-        // 手動模式
+    if (water_pump_mode == WATER_PUMP_MODE_MANUAL) {
+        // 半自動模式
         execute_manual_control(&_water_pump_controller);
     } else {
         // 自動模式
