@@ -78,10 +78,10 @@ static uint32_t PRESSURE_FEEDBACK_REG = 42093;    // 壓力回饋
 
 // ==================== Pump Runtime Registers ====================
 // 泵浦運轉時間記錄寄存器 (斷電保持)
-static uint32_t PUMP1_RUNTIME_SEC_REG = 42161;   // Pump1 運轉時間 - 秒 (0-59)
-static uint32_t PUMP1_RUNTIME_MIN_REG = 42162;   // Pump1 運轉時間 - 分 (0-59)
-static uint32_t PUMP1_RUNTIME_HOUR_REG = 42163;  // Pump1 運轉時間 - 時 (0-23)
-static uint32_t PUMP1_RUNTIME_DAY_REG = 42164;   // Pump1 運轉時間 - 天 (累積)
+static uint32_t PUMP1_RUNTIME_SEC_REG = 46031;   // Pump1 運轉時間 - 秒 (0-59)
+static uint32_t PUMP1_RUNTIME_MIN_REG = 46032;   // Pump1 運轉時間 - 分 (0-59)
+static uint32_t PUMP1_RUNTIME_HOUR_REG = 46033;  // Pump1 運轉時間 - 時 (0-23)
+static uint32_t PUMP1_RUNTIME_DAY_REG = 46034;   // Pump1 運轉時間 - 天 (累積)
 
 static uint32_t PUMP2_RUNTIME_SEC_REG = 46035;   // Pump2 運轉時間 - 秒 (0-59) [修正:改用 46035 避開重開機歸零問題]
 static uint32_t PUMP2_RUNTIME_MIN_REG = 46036;   // Pump2 運轉時間 - 分 (0-59) [修正:改用 46036 避開重開機歸零問題]
