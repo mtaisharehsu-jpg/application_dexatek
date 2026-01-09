@@ -1175,6 +1175,21 @@ int control_hardware_init(int machine_type)
             /* LX1400 機型配置(待實現) */
             break;
 
+        case CONTROL_LOGIC_MACHINE_TYPE_LS300D:
+            /* LS300D 機型配置 - 雙備援感測器設計 */
+            /* 配置 Port 0 的 AI/AO 模式 */
+            ret |= control_hardware_AI_AO_mode_set(0, 0, AI_AO_MODE_CURRENT_IN_EXTERNAL, 2000);
+            ret |= control_hardware_AI_AO_mode_set(0, 1, AI_AO_MODE_CURRENT_IN_EXTERNAL, 2000);
+            ret |= control_hardware_AI_AO_mode_set(0, 2, AI_AO_MODE_CURRENT_IN_EXTERNAL, 2000);
+            ret |= control_hardware_AI_AO_mode_set(0, 3, AI_AO_MODE_CURRENT_OUT, 2000);
+            // /* 配置 Port 1 的 AI/AO 模式 */
+            // ret |= control_hardware_AI_AO_mode_set(1, 0, AI_AO_MODE_CURRENT_IN_EXTERNAL, 2000);
+            // ret |= control_hardware_AI_AO_mode_set(1, 1, AI_AO_MODE_CURRENT_IN_EXTERNAL, 2000);
+            // ret |= control_hardware_AI_AO_mode_set(1, 2, AI_AO_MODE_CURRENT_IN_EXTERNAL, 2000);
+            // ret |= control_hardware_AI_AO_mode_set(1, 3, AI_AO_MODE_CURRENT_OUT, 2000);
+            debug(tag, "LS300D control_hardware_AI_AO_mode_set ret = %d", ret);
+            break;
+
         default:
             break;
     }

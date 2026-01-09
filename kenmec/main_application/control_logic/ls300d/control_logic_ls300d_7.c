@@ -1,5 +1,5 @@
 /*
- * control_logic_ls80_7.c - LS80 雙DC泵手動控制邏輯 (Control Logic 7: Dual DC Pump Manual Control)
+ * control_logic_ls300d_7.c - LS80 雙DC泵手動控制邏輯 (Control Logic 7: Dual DC Pump Manual Control)
  *
  * 【功能概述】
  * 本模組實現 CDU 系統的雙 DC 泵浦手動控制功能，專注於簡單的手動模式運作。
@@ -33,9 +33,9 @@
 #include "dexatek/main_application/include/application_common.h"
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
-static const char* debug_tag = "ls80_7_2dc_pump";
+static const char* debug_tag = "ls300d_7_2dc_pump";
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_7.json"
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_7.json"
 #define CONFIG_REGISTER_LIST_SIZE 40  // 擴大以容納運轉時間寄存器
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
@@ -352,7 +352,7 @@ static int _register_list_init(void)
     return ret;
 }
 
-int control_logic_ls80_7_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
+int control_logic_ls300d_7_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
 {
     int ret = SUCCESS;
 
@@ -367,7 +367,7 @@ int control_logic_ls80_7_config_get(uint32_t *list_size, control_logic_register_
                             Initialization Function
  ---------------------------------------------------------------------------*/
 
-int control_logic_ls80_7_2dc_pump_control_init(void)
+int control_logic_ls300d_7_2dc_pump_control_init(void)
 {
     info(debug_tag, "初始化2台DC泵手動控制系統...");
 
@@ -884,7 +884,7 @@ static void manage_all_pumps_runtime(void) {
  * @param ptr 控制邏輯結構指標 (本函數未使用)
  * @return 0=成功
  */
-int control_logic_ls80_7_2dc_pump_control(ControlLogic *ptr) {
+int control_logic_ls300d_7_2dc_pump_control(ControlLogic *ptr) {
     if (ptr == NULL) return -1;
 
     // 檢查控制邏輯7是否啟用
