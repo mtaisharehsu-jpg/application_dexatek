@@ -47,8 +47,8 @@ static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIS
 static uint32_t REG_CONTROL_LOGIC_6_ENABLE = 41006; // 控制邏輯6啟用
 
 static uint32_t REG_VALVE_SETPOINT = 40046;   // HMI 手動設定閥門開度 (%)
-static uint32_t REG_VALVE_STATE = 40047;      // 閥門狀態輸出值 (%)
-static uint32_t REG_VALVE_COMMAND = 411151;   // 閥門命令設定值 (%)
+static uint32_t REG_VALVE_STATE = 42099;      // 閥門狀態輸出值 (%)
+static uint32_t REG_VALVE_COMMAND = 411051;   // 閥門命令設定值 (%)
 static uint32_t REG_VALVE_MANUAL = 45061;     // 閥門手動模式 (0=自動, 1=手動)
 
 // ========================================================================================
