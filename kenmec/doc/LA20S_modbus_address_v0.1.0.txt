@@ -1,0 +1,358 @@
+# LA20S Modbus RTU 位址對照表
+
+## 版本資訊
+- 文件名稱: LA20S_modbus_address_v0.1.0.01.odt
+- 建立日期: 2025-11-25
+- 適用機種:  LA20S
+- 來源: 基於 Control Logic 1-7 程式碼分析
+
+---
+
+## 一、控制邏輯啟用 (41xxx)
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 41001 | 03/06 | CONTROL_LOGIC_1_ENABLE | N/A | bool | R/W | 1 | 溫度控制邏輯啟用 |
+| 41002 | 03/06 | CONTROL_LOGIC_2_ENABLE | N/A | bool | R/W | 0 | 壓力差控制邏輯啟用 |
+| 41003 | 03/06 | CONTROL_LOGIC_3_ENABLE | N/A | bool | R/W | 0 | 流量控制邏輯啟用 |
+| 41004 | 03/06 | CONTROL_LOGIC_4_ENABLE | N/A | bool | R/W | 0 | AC泵浦控制邏輯啟用 |
+| 41005 | 03/06 | CONTROL_LOGIC_5_ENABLE | N/A | bool | R/W | 0 | 補水泵控制邏輯啟用 |
+| 41006 | 03/06 | CONTROL_LOGIC_6_ENABLE | N/A | bool | R/W | 1 | 比例閥控制邏輯啟用 |
+| 41007 | 03/06 | CONTROL_LOGIC_7_ENABLE | N/A | bool | R/W | 1 | 雙DC泵控制邏輯啟用 |
+| 41008 | 03/06 | CONTROL_LOGIC_8_ENABLE | N/A | bool | R/W | 1 | PWM FAN控制邏輯啟用 |
+
+---
+
+## 二、系統狀態監控 (42xxx)
+
+### 2.1 系統狀態
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42001 | 03 | SYSTEM_STATUS | N/A | uint16 | R | 0 | bit0:電源 bit1:運轉 bit2:待機 bit7:異常 bit8:液位 |
+
+### 2.2 環境監測
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42021 | 03 | ENV_TEMP | 0.1°C | int16 | R | 0 | 環境溫度 |
+| 42022 | 03 | HUMIDITY | 0.1%RH | uint16 | R | 0 | 環境濕度 |
+| 42024 | 03 | DEW_POINT | 0.1°C | int16 | R | 0 | 露點溫度輸出 |
+
+### 2.3 流量感測器 (0.1 L/min 精度)
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+
+| 42063 | 03 | F2_FLOW | 0.1 L/min | uint16 | R | 0 | F2二次側出水流量 (主要控制) |
+
+
+### 2.4 壓力感測器 (0.01 bar 精度)
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42084 | 03 | P2_A_PRESSURE | 0.01 bar | uint16 | R | 0 | P2a二次側出水壓力 (控制) |
+| 42085 | 03 | P2_B_PRESSURE | 0.01 bar | uint16 | R | 0 | P2b二次側出水壓力 (控制) |
+| 42088 | 03 | P4_A_PRESSURE | 0.01 bar | uint16 | R | 0 | P4a二次側進水壓力 (控制) |
+| 42089 | 03 | P4_B_PRESSURE | 0.01 bar | uint16 | R | 0 | P4b二次側進水壓力 (控制) |
+
+
+
+### 2.5 泵浦運轉時間 (斷電保持)
+
+#### Pump1 運轉時間
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42161 | 03 | PUMP1_RUNTIME_SEC | 秒 | uint16 | R | 0 | Pump1運轉時間-秒 (0-59) |
+| 42162 | 03 | PUMP1_RUNTIME_MIN | 分 | uint16 | R | 0 | Pump1運轉時間-分 (0-59) |
+| 42163 | 03 | PUMP1_RUNTIME_HOUR | 時 | uint16 | R | 0 | Pump1運轉時間-時 (0-23) |
+| 42164 | 03 | PUMP1_RUNTIME_DAY | 天 | uint16 | R | 0 | Pump1運轉時間-天 (累積) |
+
+#### Pump2 運轉時間
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42165 | 03 | PUMP2_RUNTIME_SEC | 秒 | uint16 | R | 0 | Pump2運轉時間-秒 (0-59) |
+| 42166 | 03 | PUMP2_RUNTIME_MIN | 分 | uint16 | R | 0 | Pump2運轉時間-分 (0-59) |
+| 42167 | 03 | PUMP2_RUNTIME_HOUR | 時 | uint16 | R | 0 | Pump2運轉時間-時 (0-23) |
+| 42168 | 03 | PUMP2_RUNTIME_DAY | 天 | uint16 | R | 0 | Pump2運轉時間-天 (累積) |
+
+### 2.6 主泵 AUTO 模式累計時間 (斷電保持)
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42170 | 03 | PUMP1_AUTO_MODE_HOURS | 小時 | uint16 | R | 0 | Pump1作為主泵 AUTO模式累計時間 |
+| 42171 | 03 | PUMP2_AUTO_MODE_HOURS | 小時 | uint16 | R | 0 | Pump2作為主泵 AUTO模式累計時間 |
+| 42172 | 03 | PUMP1_AUTO_MODE_MINUTES | 分鐘 | uint16 | R | 0 | Pump1 AUTO模式累計分鐘 |
+| 42173 | 03 | PUMP2_AUTO_MODE_MINUTES | 分鐘 | uint16 | R | 0 | Pump2 AUTO模式累計分鐘 |
+
+### 2.7 AC泵浦回饋
+
+
+
+### 2.8 DC泵浦回饋
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42552 | 03 | DC_PUMP1_VOLTAGE | 0.1 V | uint16 | R | 0 | DC泵1電壓 |
+| 42553 | 03 | DC_PUMP1_CURRENT | 0.01 A | uint16 | R | 0 | DC泵1電流 |
+| 42554 | 03 | DC_PUMP1_TEMP | 0.1 0.1°C| uint16 | R | 0 | DC泵1溫度 |
+| 42562 | 03 | DC_PUMP2_VOLTAGE | 0.1 V | uint16 | R | 0 | DC泵2電壓 |
+| 42563 | 03 | DC_PUMP2_CURRENT | 0.01 A | uint16 | R | 0 | DC泵2電流 |
+| 42564 | 03 | DC_PUMP2_TEMP | 0.1 0.1°C | uint16 | R | 0 | DC泵2溫度 |
+
+### 2.9 補水狀態
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 42801 | 03 | CURRENT_FAIL_COUNT | 次 | uint16 | R | 0 | 補水未滿次數 (當前值) |
+
+---
+
+## 三、控制設定值 (45xxx)
+
+### 3.1 溫度控制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45001 | 03/06 | TARGET_TEMP | 0.1°C | uint16 | R/W | 250 | 目標溫度 (預設25.0°C) |
+| 45004 | 03/06 | DP_CORRECT | 0.1°C | int16 | R/W | 0 | 露點校正值 |
+| 45009 | 03/06 | TEMP_CONTROL_MODE | N/A | uint16 | R/W | 0 | 溫度控制模式 (0=手動 1=自動) |
+| 45010 | 03/06 | TEMP_FOLLOW_DEW_POINT | N/A | uint16 | R/W | 0 | 溫度跟隨露點 (0=保護 1=跟隨) |
+
+### 3.2 壓力差控制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45002 | 03/06 | PRESSURE_SETPOINT | 0.1 bar | uint16 | R/W | 10 | 壓差設定值 (預設1.0 bar) |
+| 45005 | 03/06 | CONTROL_MODE (FLOW_MODE) | N/A | uint16 | R/W | 0 | 控制模式 (0=流量 1=壓差) |
+
+### 3.3 流量控制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45003 | 03/06 | FLOW_SETPOINT | 0.1 L/min | uint16 | R/W | 2000 | 流量設定 (預設200.0 L/min) |
+
+### 3.4 泵浦速度設定
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45015 | 03/06 | PUMP1_SPEED | 0-100% | uint16 | R/W | 0 | Pump1速度 |
+| 45016 | 03/06 | PUMP2_SPEED | 0-100% | uint16 | R/W | 0 | Pump2速度 |
+
+### 3.5 系統啟停與模式控制
+0.1°C
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45020 | 03/06 | AUTO_START_STOP | N/A | uint16 | R/W | 0 | 自動啟停開關 (0=停用 1=啟用) |
+| 45021 | 03/06 | PUMP1_MANUAL_MODE | N/A | uint16 | R/W | 0 | Pump1手動模式 (0=自動 1=手動) |
+| 45022 | 03/06 | PUMP2_MANUAL_MODE | N/A | uint16 | R/W | 0 | Pump2手動模式 (0=自動 1=手動) |
+| 45023 | 03/06 | PUMP3_MANUAL_MODE | N/A | uint16 | R/W | 0 | Pump3手動模式 (0=自動 1=手動) |
+| 45025 | 03/06 | PUMP1_STOP | N/A | uint16 | R/W | 0 | Pump1停用 (0=啟用 1=停用) |
+| 45026 | 03/06 | PUMP2_STOP | N/A | uint16 | R/W | 0 | Pump2停用 (0=啟用 1=停用) |
+| 45027 | 03/06 | PUMP3_STOP | N/A | uint16 | R/W | 0 | Pump3停用 (0=啟用 1=停用) |
+
+### 3.6 泵浦速度限制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45031 | 03/06 | PUMP_MIN_SPEED | % | uint16 | R/W | 30 | 泵浦最小速度 |
+| 45032 | 03/06 | PUMP_MAX_SPEED | % | uint16 | R/W | 100 | 泵浦最大速度 |
+
+### 3.7 主泵輪換設定
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45034 | 03/06 | PUMP_SWITCH_HOUR | 小時 | uint16 | R/W | 0 | 主泵切換時數 (0=停用) |
+| 45036 | 03/06 | PUMP1_USE | N/A | uint16 | R/W | 1 | Pump1啟用開關 |
+| 45037 | 03/06 | PUMP2_USE | N/A | uint16 | R/W | 1 | Pump2啟用開關 |
+| 45045 | 03/06 | PRIMARY_PUMP_INDEX | N/A | uint16 | R/W | 1 | 當前主泵編號 (1=Pump1 2=Pump2) |
+| 45046 | 03/06 | CURRENT_PRIMARY_AUTO_HOURS | 小時 | uint16 | R/W | 0 | 主泵AUTO時間顯示-小時 |
+| 45047 | 03/06 | CURRENT_PRIMARY_AUTO_MINUTES | 分鐘 | uint16 | R/W | 0 | 主泵AUTO時間顯示-分鐘 |
+
+### 3.8 運轉時間歸零控制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45041 | 03/06 | PUMP1_RUNTIME_RESET | N/A | uint16 | R/W | 0 | Pump1運轉時間歸零 (寫1執行) |
+| 45042 | 03/06 | PUMP2_RUNTIME_RESET | N/A | uint16 | R/W | 0 | Pump2運轉時間歸零 (寫1執行) |
+
+### 3.9 補水控制參數
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45051 | 03/06 | TARGET_PRESSURE | bar | uint16 | R/W | 25 | 補水壓力設定 (預設2.5 bar) |
+| 45052 | 03/06 | START_DELAY | 0.1s | uint16 | R/W | 20 | 補水啟動延遲 (預設2.0秒) |
+| 45053 | 03/06 | MAX_RUN_TIME | 0.1s | uint16 | R/W | 3000 | 補水運行超時 (預設300秒) |
+| 45054 | 03/06 | COMPLETE_DELAY | 0.1s | uint16 | R/W | 50 | 補水完成延遲 (預設5.0秒) |
+| 45055 | 03/06 | WARNING_DELAY | 0.1s | uint16 | R/W | 100 | 缺水警告延遲 (預設10.0秒) |
+| 45056 | 03/06 | MAX_FAIL_COUNT | 次 | uint16 | R/W | 3 | 補水未滿最大次數 |
+
+### 3.10 比例閥控制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 45061 | 03/06 | VALVE_MANUAL_MODE | N/A | uint16 | R/W | 0 | 比例閥手動模式 (0=自動 1=手動) |
+| 40046 | 03/06 | VALVE_SETPOINT | N/A | uint16 | R/W | 0 | 比例閥手動設定閥門開度 |
+| 40047 | 03 | VALVE_STATE| N/A | uint16 | R/W | 0 | 比例閥閥門狀態輸出值 |
+
+---
+0.1°C
+## 四、限制參數 (HMI可設定，斷電保持) (46xxx)
+
+### 4.1 溫度限制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 46001 | 03/06 | T_HIGH_ALARM | 0.1°C | uint16 | R/W | 500 | 最高溫度限制 (預設50.0°C) |
+| 46002 | 03/06 | T_LOW_ALARM | 0.1°C | uint16 | R/W | 100 | 最低溫度限制 (預設10.0°C) |
+
+### 4.2 壓力限制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 46201 | 03/06 | P_HIGH_ALARM | 0.01 bar | uint16 | R/W | 500 | 最高壓力限制 (預設5.0 Bar) |
+| 46202 | 03/06 | P_LOW_ALARM | 0.01 bar | uint16 | R/W | 50 | 最低壓力限制 (預設0.5 Bar) |
+
+### 4.3 流量限制
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 46401 | 03/06 | FLOW_HIGH_LIMIT | L/min | uint16 | R/W | 500 | 流量上限 (HMI可設定) |
+| 46402 | 03/06 | FLOW_LOW_LIMIT | L/min | uint16 | R/W | 100 | 流量下限 (HMI可設定) |
+
+---
+
+## 五、執行器控制 (411xxx)
+0.1°C
+### 5.1 DC泵浦控制
+
+| Address | Function Code | Description | U 0.1°C nit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 411005 | 05/15 | DC_PUMP1_ENABLE | N/A | bool | W | 0 | DC泵SSR 1啟停 (0=Stop 1=Run) |
+| 411006 | 05/15 | DC_PUMP2_ENABLE | N/A | bool | W | 0 | DC泵SSR 2啟停 (0=Stop 1=Run) |
+
+### 5.2 補水泵控制
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 411008 | 05/15 | WATER_PUMP_CONTROL | N/A | bool | R/W | 0 | 補水泵啟停 (0=Stop 1=Run) |
+| 411001 | 05/15 | 電動閥1_Open | N/A | bool | R/W | 0 | 電動閥1_Open(0=Stop 1=Run) |
+| 411002 | 05/15 | 電動閥1_Close | N/A | bool | R/W | 0 | 電動閥1_Close(0=Stop 1=Run) |
+| 411003 | 05/15 | 電動閥2_Open | N/A | bool | R/W | 0 | 電動閥2_Open(0=Stop 1=Run) |
+| 411004 | 05/15 | 電動閥2_Close | N/A | bool | R/W | 0 | 電動閥2_Close(0=Stop 1=Run) |
+
+### 5.3 漏液與液位檢測
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+| 411009| 02 | 電動閥lLS1_Open | N/A | bool | R | 0 | 電動閥1開定位 (0=無 1=有) |
+| 411010| 02 | 電動閥lLS1_Close | N/A | bool | R | 0 | 電動閥1關定位 (0=無 1=有) |
+| 411011| 02 | 電動閥lLS2_Open | N/A | bool | R | 0 | 電動閥2開定位 (0=無 1=有) |
+| 411012| 02 | 電動閥lLS2_Close | N/A | bool | R | 0 | 電動閥2關定位 (0=無 1=有) |
+| 411015 | 02 | LEAK_DETECTION | N/A | bool | R | 0 | CDU漏液檢測 (0=正常 1=漏液) |
+| 411016 | 02 | LS_LEVEL | N/A | bool | R | 0 | CDU_LS水箱高液位 (0=無 1=有) |
+
+
+### 5.4 AC泵浦速度指令
+
+### 5.5 AC泵浦啟停控制
+
+### 5.6 ＰＷＭ風扇控制
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+| 411007 | 05/15 | PWM_FAN_ENABLE | N/A | bool | W | 0 | PWMＦＡＮSSR 2啟停 (0=Stop 1=Run) |
+| 412506 | 06 | PWM_FAN1_duty | N/A | uint16 | W | 0 | PWM_FAN1 速度(0－１００％） |
+| 412506 | 06 | PWM_FAN1_duty | N/A | uint16 | W | 0 | PWM_FAN1 速度(0－１００％） |
+| 412507 | 06 | PWM_FAN2_duty | N/A | uint16 | W | 0 | PWM_FAN2 速度(0－１００％） |
+| 412508 | 06 | PWM_FAN3_duty | N/A | uint16 | W | 0 | PWM_FAN3 速度(0－１００％） |
+| 412509 | 06 | PWM_FAN4_duty | N/A | uint16 | W | 0 | PWM_FAN4 速度(0－１００％） |
+| 412510 | 06 | PWM_FAN5_duty | N/A | uint16 | W | 0 | PWM_FAN5 速度(0－１００％） |
+| 412511 | 06 | PWM_FAN6_duty | N/A | uint16 | W | 0 | PWM_FAN6速度(0－１００％） |
+| 412524 | 03 | PWM_FAN1_Frequence | N/A | uint32|  R|  0 | PWM_FAN1轉速(us） |
+| 412526 | 03 | PWM_FAN2_Frequence | N/A | uint32|  R|  0 | PWM_FAN2轉速(us） |
+| 412528 | 03 | PWM_FAN3_Frequence | N/A | uint32|  R|  0 | PWM_FAN3轉速(us） |
+| 412530 | 03 | PWM_FAN4_Frequence | N/A | uint32|  R|  0 | PWM_FAN4轉速(us） |
+| 412532 | 03 | PWM_FAN5_Frequence | N/A | uint32|  R|  0 | PWM_FAN5轉速(us） |
+| 412534 | 03 | PWM_FAN6_Frequence | N/A | uint32|  R|  0 | PWM_FAN6轉速(us） |
+
+### 5.7 DC泵浦異常復歸
+
+### 5.8 泵浦故障狀態
+
+### 5.9 比例閥控制
+
+| Address | Function Code | Description | U 0.1°C nit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-------0.1°C----|-----|---------|------|
+| 411063 | 06 | VALVE_OPENING | 0-100% | uint16 | R/W | 0 | 比例閥開度設定 |
+| 411067 | 03 | VALVE_OPENING Feedback| 0-100% | uint16 | R | 0 | 比例閥開度回饋 |
+
+---
+0.1°C
+## 六、溫度感測器 (412xxx)
+
+| Address | Function Code | Description | Unit | Data Type | R/W | Default | Note |
+|---------|---------------|-------------|------|-----------|-----|---------|------|
+| 412554 | 03 | T1_TEMP | 0.1°C | uint16 | R | 0 | T1一次側進水溫度  |
+| 412556 | 03 | T2_TEMP | 0.1°C | uint16 | R | 0 | T2二次側出水溫度 (主要控制) |
+| 412558 | 03 | T3_TEMP | 0.1°C | uint16 | R | 0 | T3一次側出水溫度  |
+| 412560 | 03 | T4_TEMP | 0.1°C | uint16 | R | 0 | T4二次側回水溫度  |
+| 412562 | 03 | T5_TEMP | 0.1°C | uint16 | R | 0 | T5二次側回水溫度  |
+| 412564 | 03 | T6_TEMP | 0.1°C | uint16 | R | 0 | T6二次側回水溫度  |
+
+
+---
+
+## 七、Modbus Function Code 說明
+
+- **02**: Read Discrete Inputs (讀取離散輸入，只讀DI)
+- **03**: Read Holding Registers (讀取保持寄存器)
+- **05**: Write Single Coil (寫入單個線圈，DO控制)
+- **06**: Write Single Register (寫入單個寄存器)
+- **15**: Write Multiple Coils (寫入多個線圈)
+
+---
+
+## 八、數據類型說明
+
+- **bool**: 布林值 (0=False, 1=True)
+- **uint16**: 無符號16位整數 (0-65535)
+- **int16**: 有符號16位整數 (-32768 to 32767)
+
+---
+
+## 九、Control Logic 功能對應
+
+### Logic 1: 溫度控制
+- 位址範圍: 41001, 42021-42024, 45001, 45004, 45009-45010, 45061, 46001-46002, 411151, 413556, 413560
+
+### Logic 2: 壓力差控制
+- 位址範圍: 41002, 42082-42085, 42170-42173, 45002, 45005, 45015-45016, 45021-45022, 45034-45047, 46201-46202, 411101, 411103
+
+### Logic 3: 流量控制
+- 位址範圍: 41003, 42062-42063, 42170-42173, 45003, 45005, 45015-45016, 45021-45022, 45034-45047, 46401-46402, 411101-411102
+
+### Logic 4: AC泵浦控制
+
+
+### Logic 5: 補水泵控制
+- 位址範圍: 41005, 42001, 42086, 42801, 45051-45056, 411003, 411010, 411015
+
+### Logic 7: 雙DC泵控制
+- 位址範圍: 41007, 42161-42168, 42501, 42511, 42552-42553, 42562-42563, 45003-45004, 45015-45016, 45020-45022, 45026-45027, 45031-45032, 45041-45042, 411001-411002, 411108-411111
+
+---
+
+## 十、備註
+
+1. **斷電保持**: 部分寄存器具有斷電保持功能 (46xxx, 42xxx 部分)
+2. **精度說明**:
+   - 溫度: 0.1°C (值需除以10)
+   - 壓力: 0.01 bar 或 0.1 bar (依感測器而定)
+   - 流量: 0.1 L/min (值需除以10)
+3. **地址衝突**: 部分位址在不同 Logic 中重複使用，請依據啟用的 Control Logic 判斷
+4. **手動模式**: AUTO_START_STOP=0 時，允許 HMI 手動設定泵浦速度
+5. **自動模式**: AUTO_START_STOP=1 時，系統自動控制泵浦運作
+
+---
+
+**文件版本**: v1.0
+**最後更新**: 2025-11-25
+**維護者**: Claude AI (基於程式碼分析)
