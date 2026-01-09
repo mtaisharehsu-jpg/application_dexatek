@@ -64,16 +64,8 @@
 static const char *debug_tag = "ls80_3_flow";
 
 #define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_3.json"
-#define CONFIG_REGISTER_LIST_SIZE 29  // 新增 4 個 PID 參數寄存器 (45507-45509, 45902) + 原有 25 個
+#define CONFIG_REGISTER_LIST_SIZE 25
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
-
-// 顯示時間持久化配置
-#define DISPLAY_TIME_PERSIST_FILE "/usrdata/ls80_3_display_time.json"
-#define DISPLAY_TIME_SAVE_INTERVAL 300  // 每 5 分鐘保存一次 (秒)
-static time_t last_display_time_save = 0;  // 上次保存時間戳
-
-// 主泵狀態持久化配置
-#define PRIMARY_PUMP_PERSIST_FILE "/usrdata/ls80_3_primary_pump.json"
 
 // 系統狀態寄存器
 static uint32_t REG_CONTROL_LOGIC_2_ENABLE = 41002; // 控制邏輯2啟用
@@ -88,12 +80,6 @@ static uint32_t REG_TARGET_FLOW = 45003;   // 目標流量設定 (F_set)
 static uint32_t REG_FLOW_MODE = 45005;   // 流量/壓差模式選擇 (0=流量模式)
 static uint32_t REG_FLOW_HIGH_LIMIT = 46401;   // 流量上限 (HMI 可設定,斷電保持)
 static uint32_t REG_FLOW_LOW_LIMIT = 46402;   // 流量下限 (HMI 可設定,斷電保持)
-
-// PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
-static uint32_t REG_PID_FLOW_KP = 45507;              // 流量控制 Kp (預設 250 → 2.5)
-static uint32_t REG_PID_FLOW_KI = 45508;              // 流量控制 Ki (預設 40 → 0.4)
-static uint32_t REG_PID_FLOW_KD = 45509;              // 流量控制 Kd (預設 80 → 0.8)
-static uint32_t REG_RESTORE_DEFAULT_PID_FLOW = 45902; // 恢復 PID 預設值 (寫入 1 觸發)
 
 static uint32_t REG_PUMP1_SPEED = 45015;  // Pump1速度設定 (0-1000)
 static uint32_t REG_PUMP2_SPEED = 45016;  // Pump2速度設定
@@ -112,11 +98,7 @@ static uint32_t REG_VALVE_MANUAL_MODE = 45061;   // [DISABLED] 比例閥手動�
 static uint32_t REG_PUMP_SWITCH_HOUR = 45034;      // 主泵切換時數設定 (小時, 0=停用自動切換)
 static uint32_t REG_PUMP1_USE = 45036;             // Pump1 啟用開關 (0=停用, 1=啟用) - 避免與 REG_PUMP2_STOP 衝突
 static uint32_t REG_PUMP2_USE = 45037;             // Pump2 啟用開關 (0=停用, 1=啟用) - 避免與 REG_PUMP3_STOP 衝突
-static uint32_t REG_PRIMARY_PUMP_INDEX = 45045;    // 當前主泵編號 (1=Pump1, 2=Pump2) - HMI 可指定
-
-// 當前主泵 AUTO 模式累積時間顯示寄存器 (獨立累積,用於顯示和切換判斷)
-static uint32_t REG_CURRENT_PRIMARY_AUTO_HOURS = 45046;    // 顯示用累積小時
-static uint32_t REG_CURRENT_PRIMARY_AUTO_MINUTES = 45047;  // 顯示用累積分鐘
+static uint32_t REG_PRIMARY_PUMP_INDEX = 45045;    // 當前主泵編號 (1=Pump1, 2=Pump2)
 
 // AUTO 模式累計時間寄存器 (斷電保持)
 static uint32_t REG_PUMP1_AUTO_MODE_HOURS = 42170;    // Pump1 作為主泵在 AUTO 模式累計時間 (小時)
@@ -229,20 +211,6 @@ typedef struct {
 static primary_pump_auto_tracker_t pump1_auto_tracker = {0, false, false};
 static primary_pump_auto_tracker_t pump2_auto_tracker = {0, false, false};
 
-// 顯示時間追蹤結構 (獨立於 Pump1/Pump2 的累積)
-typedef struct {
-    time_t last_update_time;       // 上次更新時間戳
-    bool last_auto_mode_state;     // 上次 AUTO 模式狀態
-    bool initialized;              // 是否已初始化
-    uint16_t accumulated_seconds;  // 累積秒數 (用於進位)
-} display_time_tracker_t;
-
-// 顯示時間全局追蹤器
-static display_time_tracker_t display_tracker = {0, false, false, 0};
-
-// 追蹤主泵變化 (用於偵測 HMI 手動修改)
-static uint16_t last_primary_pump_index = 0;
-
 /*---------------------------------------------------------------------------
 							Function Prototypes
  ---------------------------------------------------------------------------*/
@@ -260,12 +228,6 @@ static int execute_manual_flow_control_mode(float target_flow);
 static int execute_automatic_flow_control_mode(const flow_sensor_data_t *data);
 static void calculate_basic_pump_control(float pid_output, flow_control_output_t *output);
 static void execute_flow_control_output(const flow_control_output_t *output);
-static void update_display_auto_time(void);
-static void check_and_switch_primary_pump(void);
-static int save_display_time_to_file(void);
-static int restore_display_time_from_file(void);
-static int save_primary_pump_state_to_file(void);
-static int restore_primary_pump_state_from_file(void);
 //static float calculate_valve_adjustment(float pid_output, const flow_sensor_data_t *data);
 
 /*---------------------------------------------------------------------------
@@ -287,109 +249,6 @@ static bool modbus_write_single_register(uint32_t address, uint16_t value) {
     int ret = control_logic_write_register(address, value, 2000);
 
     return (ret == SUCCESS)? true : false;
-}
-
-/**
- * 從寄存器載入 PID 參數並應用到控制器
- *
- * 寄存器值精度為 ×100 (例如: 250 → 2.5)
- * 包含參數合理性檢查,超出範圍時使用邊界值
- */
-static void load_flow_pid_parameters(void) {
-    // 讀取 PID 參數寄存器 (精度 ×100)
-    uint16_t kp_reg = modbus_read_input_register(REG_PID_FLOW_KP);
-    uint16_t ki_reg = modbus_read_input_register(REG_PID_FLOW_KI);
-    uint16_t kd_reg = modbus_read_input_register(REG_PID_FLOW_KD);
-
-    // 檢查寄存器是否有效 (非讀取失敗)
-    if (kp_reg == 0xFFFF || ki_reg == 0xFFFF || kd_reg == 0xFFFF) {
-        // 寄存器讀取失敗,保持當前參數
-        return;
-    }
-
-    // 轉換為實際值 (除以 100.0)
-    float kp = (float)kp_reg / 100.0f;
-    float ki = (float)ki_reg / 100.0f;
-    float kd = (float)kd_reg / 100.0f;
-
-    // 參數合理性檢查 (Kp: 0.5-10.0, Ki: 0.1-2.0, Kd: 0.0-5.0)
-    if (kp < 0.5f) {
-        info(debug_tag, "【PID參數】Kp=%.2f 過小,限制為 0.5", kp);
-        kp = 0.5f;
-    } else if (kp > 10.0f) {
-        info(debug_tag, "【PID參數】Kp=%.2f 過大,限制為 10.0", kp);
-        kp = 10.0f;
-    }
-
-    if (ki < 0.1f) {
-        info(debug_tag, "【PID參數】Ki=%.2f 過小,限制為 0.1", ki);
-        ki = 0.1f;
-    } else if (ki > 2.0f) {
-        info(debug_tag, "【PID參數】Ki=%.2f 過大,限制為 2.0", ki);
-        ki = 2.0f;
-    }
-
-    if (kd < 0.0f) {
-        info(debug_tag, "【PID參數】Kd=%.2f 為負值,限制為 0.0", kd);
-        kd = 0.0f;
-    } else if (kd > 5.0f) {
-        info(debug_tag, "【PID參數】Kd=%.2f 過大,限制為 5.0", kd);
-        kd = 5.0f;
-    }
-
-    // 檢查參數是否有變化 (容許 0.01 誤差)
-    bool changed = false;
-    if (fabsf(flow_pid.kp - kp) > 0.01f ||
-        fabsf(flow_pid.ki - ki) > 0.01f ||
-        fabsf(flow_pid.kd - kd) > 0.01f) {
-        changed = true;
-    }
-
-    // 只在參數實際變更時更新並記錄
-    if (changed) {
-        info(debug_tag, "【PID參數更新】Kp=%.2f→%.2f, Ki=%.2f→%.2f, Kd=%.2f→%.2f",
-             flow_pid.kp, kp, flow_pid.ki, ki, flow_pid.kd, kd);
-
-        flow_pid.kp = kp;
-        flow_pid.ki = ki;
-        flow_pid.kd = kd;
-    }
-}
-
-/**
- * 恢復 PID 參數為出廠預設值
- *
- * 使用邊緣觸發 (0→1) 檢測
- * 預設值: Kp=2.5 (250), Ki=0.4 (40), Kd=0.8 (80)
- */
-static void restore_default_flow_pid(void) {
-    static uint16_t previous_restore_flag = 0;
-
-    // 讀取恢復標誌
-    uint16_t current_restore_flag = modbus_read_input_register(REG_RESTORE_DEFAULT_PID_FLOW);
-
-    // 邊緣觸發檢測: 0→1
-    if (previous_restore_flag == 0 && current_restore_flag == 1) {
-        info(debug_tag, "【PID參數恢復】觸發恢復出廠預設值...");
-
-        // 寫入預設值到寄存器 (精度 ×100)
-        modbus_write_single_register(REG_PID_FLOW_KP, 250);  // 2.5
-        modbus_write_single_register(REG_PID_FLOW_KI, 40);   // 0.4
-        modbus_write_single_register(REG_PID_FLOW_KD, 80);   // 0.8
-
-        // 直接更新 PID 控制器
-        flow_pid.kp = 2.5f;
-        flow_pid.ki = 0.4f;
-        flow_pid.kd = 0.8f;
-
-        // 清除觸發標誌
-        modbus_write_single_register(REG_RESTORE_DEFAULT_PID_FLOW, 0);
-
-        info(debug_tag, "【PID參數恢復】已恢復為出廠預設值: Kp=2.5, Ki=0.4, Kd=0.8");
-    }
-
-    // 更新前次狀態
-    previous_restore_flag = current_restore_flag;
 }
 
 /**
@@ -670,38 +529,6 @@ static int _register_list_init(void)
     _control_logic_register_list[20].default_address = REG_PUMP2_AUTO_MODE_MINUTES;
     _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    // 當前主泵 AUTO 累積時間顯示寄存器 (獨立累積, 支援斷電保持)
-    _control_logic_register_list[21].name = REG_CURRENT_PRIMARY_AUTO_HOURS_STR;
-    _control_logic_register_list[21].address_ptr = &REG_CURRENT_PRIMARY_AUTO_HOURS;
-    _control_logic_register_list[21].default_address = REG_CURRENT_PRIMARY_AUTO_HOURS;
-    _control_logic_register_list[21].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
-
-    _control_logic_register_list[22].name = REG_CURRENT_PRIMARY_AUTO_MINUTES_STR;
-    _control_logic_register_list[22].address_ptr = &REG_CURRENT_PRIMARY_AUTO_MINUTES;
-    _control_logic_register_list[22].default_address = REG_CURRENT_PRIMARY_AUTO_MINUTES;
-    _control_logic_register_list[22].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
-
-    // PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
-    _control_logic_register_list[23].name = REG_PID_FLOW_KP_STR;
-    _control_logic_register_list[23].address_ptr = &REG_PID_FLOW_KP;
-    _control_logic_register_list[23].default_address = REG_PID_FLOW_KP;
-    _control_logic_register_list[23].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
-
-    _control_logic_register_list[24].name = REG_PID_FLOW_KI_STR;
-    _control_logic_register_list[24].address_ptr = &REG_PID_FLOW_KI;
-    _control_logic_register_list[24].default_address = REG_PID_FLOW_KI;
-    _control_logic_register_list[24].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
-
-    _control_logic_register_list[25].name = REG_PID_FLOW_KD_STR;
-    _control_logic_register_list[25].address_ptr = &REG_PID_FLOW_KD;
-    _control_logic_register_list[25].default_address = REG_PID_FLOW_KD;
-    _control_logic_register_list[25].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
-
-    _control_logic_register_list[26].name = REG_RESTORE_DEFAULT_PID_FLOW_STR;
-    _control_logic_register_list[26].address_ptr = &REG_RESTORE_DEFAULT_PID_FLOW;
-    _control_logic_register_list[26].default_address = REG_RESTORE_DEFAULT_PID_FLOW;
-    _control_logic_register_list[26].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
-
     uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
     ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
     debug(debug_tag, "load register array from file %s, ret %d", CONFIG_REGISTER_FILE_PATH, ret);
@@ -785,90 +612,6 @@ int control_logic_ls80_3_flow_control_init(void)
 
     info(debug_tag, "【診斷】流量限制初始化完成");
 
-    // ========== 恢復顯示時間 (斷電保持機制) ==========
-    info(debug_tag, "【診斷】開始恢復顯示時間...");
-
-    if (restore_display_time_from_file() == SUCCESS) {
-        info(debug_tag, "【開機初始化】顯示時間恢復成功 ✓");
-    } else {
-        // 文件不存在或損壞,使用預設值 0
-        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
-        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
-        info(debug_tag, "【開機初始化】顯示時間初始化為 0:00 ✓");
-    }
-
-    info(debug_tag, "【診斷】顯示時間初始化完成");
-
-    // ========== 恢復主泵選擇 (斷電保持機制) ==========
-    info(debug_tag, "【診斷】開始恢復主泵選擇...");
-
-    if (restore_primary_pump_state_from_file() == SUCCESS) {
-        info(debug_tag, "【開機初始化】主泵選擇恢復成功 ✓");
-    } else {
-        // 文件不存在或損壞,使用預設值 Pump1
-        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, 1);
-        info(debug_tag, "【開機初始化】主泵選擇初始化為 Pump1 ✓");
-
-        // ===== 立即創建基線文件 =====
-        save_primary_pump_state_to_file();
-        info(debug_tag, "【斷電保持】創建主泵狀態基線文件");
-    }
-
-    info(debug_tag, "【診斷】主泵選擇初始化完成");
-
-    // ========== 初始化 PID 參數預設值 (HMI 可修改，斷電保持，精度 ×100) ==========
-    info(debug_tag, "【診斷】開始初始化 PID 參數...");
-
-    // 讀取 Kp 參數
-    uint16_t current_kp = modbus_read_input_register(REG_PID_FLOW_KP);
-    if (current_kp == 0 || current_kp == 0xFFFF) {
-        modbus_write_single_register(REG_PID_FLOW_KP, 250);  // 2.5
-        uint16_t verify = modbus_read_input_register(REG_PID_FLOW_KP);
-        if (verify == 250) {
-            info(debug_tag, "【開機初始化】設定 PID Kp 預設值: 2.5 ✓");
-        } else {
-            error(debug_tag, "【開機初始化】設定 PID Kp 失敗! 回讀值=%u", verify);
-        }
-    } else {
-        float kp = current_kp / 100.0f;
-        info(debug_tag, "【開機初始化】PID Kp 已設置: %.2f (保留現有值) ✓", kp);
-    }
-
-    // 讀取 Ki 參數
-    uint16_t current_ki = modbus_read_input_register(REG_PID_FLOW_KI);
-    if (current_ki == 0 || current_ki == 0xFFFF) {
-        modbus_write_single_register(REG_PID_FLOW_KI, 40);   // 0.4
-        uint16_t verify = modbus_read_input_register(REG_PID_FLOW_KI);
-        if (verify == 40) {
-            info(debug_tag, "【開機初始化】設定 PID Ki 預設值: 0.4 ✓");
-        } else {
-            error(debug_tag, "【開機初始化】設定 PID Ki 失敗! 回讀值=%u", verify);
-        }
-    } else {
-        float ki = current_ki / 100.0f;
-        info(debug_tag, "【開機初始化】PID Ki 已設置: %.2f (保留現有值) ✓", ki);
-    }
-
-    // 讀取 Kd 參數
-    uint16_t current_kd = modbus_read_input_register(REG_PID_FLOW_KD);
-    if (current_kd == 0 || current_kd == 0xFFFF) {
-        modbus_write_single_register(REG_PID_FLOW_KD, 80);   // 0.8
-        uint16_t verify = modbus_read_input_register(REG_PID_FLOW_KD);
-        if (verify == 80) {
-            info(debug_tag, "【開機初始化】設定 PID Kd 預設值: 0.8 ✓");
-        } else {
-            error(debug_tag, "【開機初始化】設定 PID Kd 失敗! 回讀值=%u", verify);
-        }
-    } else {
-        float kd = current_kd / 100.0f;
-        info(debug_tag, "【開機初始化】PID Kd 已設置: %.2f (保留現有值) ✓", kd);
-    }
-
-    // 初始化恢復標誌為 0
-    modbus_write_single_register(REG_RESTORE_DEFAULT_PID_FLOW, 0);
-
-    info(debug_tag, "【診斷】PID 參數初始化完成");
-
     return ret;
 }
 
@@ -946,12 +689,11 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
     // === 寄存器初始化 (只在第一次執行) ===
     static bool registers_initialized = false;
     if (!registers_initialized) {
-        // 主泵選擇已在 init 函數中從 JSON 恢復,這裡只做驗證
+        // 如果主泵選擇寄存器未設定,設為預設值 1 (Pump1)
         uint16_t primary_pump = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
         if (primary_pump != 1 && primary_pump != 2) {
-            // 主泵選擇已在 init 函數中設定,這裡不應該修改
-            // 如果發生異常,記錄錯誤但不強制修改
-            error(debug_tag, "【錯誤】主泵選擇異常: %d (應為 1 或 2),將在下次讀取時使用預設值", primary_pump);
+            modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, 1);
+            info(debug_tag, "初始化主泵選擇為 Pump1");
         }
 
         // 初始化 Pump1 啟用開關 (預設啟用)
@@ -976,22 +718,11 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
              modbus_read_input_register(REG_PUMP2_AUTO_MODE_HOURS),
              modbus_read_input_register(REG_PUMP2_AUTO_MODE_MINUTES));
 
-        // 初始化主泵變化追蹤
-        last_primary_pump_index = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
-        if (last_primary_pump_index != 1 && last_primary_pump_index != 2) {
-            last_primary_pump_index = 1;
-        }
-        info(debug_tag, "初始化主泵變化追蹤: primary_pump=%d", last_primary_pump_index);
-
         registers_initialized = true;
     }
 
     // 處理 AUTO_START_STOP 邊緣觸發
     handle_auto_start_stop();
-
-    // 【PID參數管理】每個週期載入寄存器參數並檢查恢復請求
-    load_flow_pid_parameters();
-    restore_default_flow_pid();
 
     // 【步驟0】檢測 enable 從 1 變為 0，觸發切換到手動模式
     uint16_t current_enable = modbus_read_input_register(REG_CONTROL_LOGIC_3_ENABLE);
@@ -1097,14 +828,6 @@ int control_logic_ls80_3_flow_control(ControlLogic *ptr) {
 
     // 恢復 PUMP_MANUAL_MODE 狀態 (如果在 FLOW_MODE 切換時有保存)
     restore_pump_manual_mode_if_saved();
-
-    // 【步驟7】更新顯示時間累積 (45046/45047)
-    // 當 AUTO_START_STOP = 1 時,累積顯示時間
-    update_display_auto_time();
-
-    // 【步驟8】檢查並執行主泵自動切換
-    // 當顯示時間達到設定值時,切換主泵並歸零顯示時間
-    check_and_switch_primary_pump();
 
     debug(debug_tag, "=== CDU流量控制循環完成 ===");
     return ret;
@@ -1347,419 +1070,56 @@ static void update_primary_pump_auto_time(int pump_index,
 }
 
 /**
- * 保存顯示時間到文件
- *
- * 功能:
- * - 將 REG_CURRENT_PRIMARY_AUTO_HOURS (45046) 和
- *   REG_CURRENT_PRIMARY_AUTO_MINUTES (45047) 保存到 JSON 文件
- * - 使用 fsync 確保數據寫入磁盤
- *
- * @return SUCCESS 成功, FAIL 失敗
- */
-static int save_display_time_to_file(void) {
-    // 讀取當前顯示時間寄存器
-    uint16_t hours = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_HOURS);
-    uint16_t minutes = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_MINUTES);
-
-    // 建立 JSON 對象
-    cJSON *root = cJSON_CreateObject();
-    if (root == NULL) {
-        error(debug_tag, "【斷電保持】建立 JSON 對象失敗");
-        return FAIL;
-    }
-
-    // 添加時間數據
-    cJSON_AddNumberToObject(root, "display_hours", hours);
-    cJSON_AddNumberToObject(root, "display_minutes", minutes);
-    cJSON_AddNumberToObject(root, "timestamp", (double)time(NULL));
-
-    // 轉換為 JSON 字符串
-    char *json_string = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-
-    if (json_string == NULL) {
-        error(debug_tag, "【斷電保持】轉換 JSON 字符串失敗");
-        return FAIL;
-    }
-
-    // 保存到文件
-    FILE *fp = fopen(DISPLAY_TIME_PERSIST_FILE, "w");
-    if (!fp) {
-        error(debug_tag, "【斷電保持】無法打開文件寫入: %s", DISPLAY_TIME_PERSIST_FILE);
-        free(json_string);
-        return FAIL;
-    }
-
-    size_t len = strlen(json_string);
-    size_t written = fwrite(json_string, 1, len, fp);
-
-    // 刷新 stdio 緩衝區到內核頁面緩存
-    fflush(fp);
-
-    // 強制刷新到存儲設備 (確保斷電後數據不丟失)
-    int fd = fileno(fp);
-    if (fsync(fd) != 0) {
-        warn(debug_tag, "【斷電保持】fsync 失敗,數據可能在斷電時丟失");
-    }
-
-    fclose(fp);
-    free(json_string);
-
-    if (written != len) {
-        error(debug_tag, "【斷電保持】寫入文件失敗: %s", DISPLAY_TIME_PERSIST_FILE);
-        return FAIL;
-    }
-
-    debug(debug_tag, "【斷電保持】顯示時間已保存: %d 小時 %d 分鐘", hours, minutes);
-    return SUCCESS;
-}
-
-/**
- * 從文件恢復顯示時間
- *
- * 功能:
- * - 系統啟動時讀取上次保存的顯示時間
- * - 恢復到 REG_CURRENT_PRIMARY_AUTO_HOURS (45046) 和
- *   REG_CURRENT_PRIMARY_AUTO_MINUTES (45047)
- *
- * @return SUCCESS 成功, FAIL 失敗或文件不存在
- */
-static int restore_display_time_from_file(void) {
-    // 讀取整個文件
-    long json_len = 0;
-    char *json_text = control_logic_read_entire_file(DISPLAY_TIME_PERSIST_FILE, &json_len);
-
-    if (json_text == NULL) {
-        info(debug_tag, "【斷電保持】顯示時間持久化文件不存在,使用預設值 0");
-        return FAIL;
-    }
-
-    // 解析 JSON
-    cJSON *root = cJSON_Parse(json_text);
-    free(json_text);
-
-    if (root == NULL) {
-        error(debug_tag, "【斷電保持】解析 JSON 失敗,文件可能已損壞");
-        remove(DISPLAY_TIME_PERSIST_FILE);  // 刪除損壞文件
-        return FAIL;
-    }
-
-    // 讀取時間數據
-    cJSON *hours_item = cJSON_GetObjectItemCaseSensitive(root, "display_hours");
-    cJSON *minutes_item = cJSON_GetObjectItemCaseSensitive(root, "display_minutes");
-
-    if (!cJSON_IsNumber(hours_item) || !cJSON_IsNumber(minutes_item)) {
-        error(debug_tag, "【斷電保持】JSON 格式錯誤,缺少必要字段");
-        cJSON_Delete(root);
-        remove(DISPLAY_TIME_PERSIST_FILE);  // 刪除損壞文件
-        return FAIL;
-    }
-
-    uint16_t hours = (uint16_t)hours_item->valueint;
-    uint16_t minutes = (uint16_t)minutes_item->valueint;
-
-    // 數據驗證 (防止異常值)
-    if (minutes >= 60) {
-        warn(debug_tag, "【斷電保持】恢復的分鐘數無效: %d, 使用 0", minutes);
-        minutes = 0;
-    }
-
-    if (hours > 100000) {
-        warn(debug_tag, "【斷電保持】恢復的小時數異常大: %d, 使用 0", hours);
-        hours = 0;
-    }
-
-    // 寫回寄存器
-    modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, hours);
-    modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, minutes);
-
-    info(debug_tag, "【斷電保持】成功恢復顯示時間: %d 小時 %d 分鐘", hours, minutes);
-
-    cJSON_Delete(root);
-    return SUCCESS;
-}
-
-/**
- * 保存主泵狀態到文件 (斷電保持)
- *
- * 功能:
- * - 將當前主泵選擇 (REG_PRIMARY_PUMP_INDEX) 保存到 JSON 文件
- * - 只保存有效值 (1 或 2)
- * - 使用 fsync 確保數據寫入磁盤
- *
- * @return SUCCESS: 保存成功, FAILURE: 保存失敗
- */
-static int save_primary_pump_state_to_file(void) {
-    uint16_t primary_pump = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
-
-    // 只保存有效值
-    if (primary_pump != 1 && primary_pump != 2) {
-        warn(debug_tag, "【斷電保持】主泵選擇值無效: %d, 不保存", primary_pump);
-        return FAIL;
-    }
-
-    // 建立 JSON 物件
-    cJSON *root = cJSON_CreateObject();
-    if (root == NULL) {
-        error(debug_tag, "【斷電保持】建立 JSON 物件失敗");
-        return FAIL;
-    }
-
-    cJSON_AddNumberToObject(root, "primary_pump", primary_pump);
-
-    // 轉換為字符串
-    char *json_str = cJSON_Print(root);
-    cJSON_Delete(root);
-
-    if (json_str == NULL) {
-        error(debug_tag, "【斷電保持】JSON 序列化失敗");
-        return FAIL;
-    }
-
-    // 寫入文件
-    FILE *fp = fopen(PRIMARY_PUMP_PERSIST_FILE, "w");
-    if (fp == NULL) {
-        error(debug_tag, "【斷電保持】無法打開文件寫入: %s", PRIMARY_PUMP_PERSIST_FILE);
-        free(json_str);
-        return FAIL;
-    }
-
-    fprintf(fp, "%s", json_str);
-    fflush(fp);
-    fsync(fileno(fp));
-    fclose(fp);
-    free(json_str);
-
-    return SUCCESS;
-}
-
-/**
- * 從文件恢復主泵狀態 (斷電保持)
- *
- * 功能:
- * - 從 JSON 文件讀取主泵選擇狀態
- * - 驗證數據有效性 (必須為 1 或 2)
- * - 寫回到 REG_PRIMARY_PUMP_INDEX 寄存器
- *
- * @return SUCCESS: 恢復成功, FAILURE: 文件不存在或數據無效
- */
-static int restore_primary_pump_state_from_file(void) {
-    // 讀取整個文件
-    long json_len = 0;
-    char *json_text = control_logic_read_entire_file(PRIMARY_PUMP_PERSIST_FILE, &json_len);
-
-    if (json_text == NULL) {
-        info(debug_tag, "【斷電保持】主泵狀態持久化文件不存在,使用預設值 Pump1");
-        return FAIL;
-    }
-
-    // 解析 JSON
-    cJSON *root = cJSON_Parse(json_text);
-    free(json_text);
-
-    if (root == NULL) {
-        error(debug_tag, "【斷電保持】解析 JSON 失敗,文件可能已損壞");
-        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
-        return FAIL;
-    }
-
-    // 讀取主泵選擇
-    cJSON *primary_pump_item = cJSON_GetObjectItemCaseSensitive(root, "primary_pump");
-
-    if (!cJSON_IsNumber(primary_pump_item)) {
-        error(debug_tag, "【斷電保持】JSON 格式錯誤,缺少 primary_pump 字段");
-        cJSON_Delete(root);
-        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
-        return FAIL;
-    }
-
-    uint16_t primary_pump = (uint16_t)primary_pump_item->valueint;
-
-    // 數據驗證
-    if (primary_pump != 1 && primary_pump != 2) {
-        error(debug_tag, "【斷電保持】恢復的主泵選擇無效: %d (應為 1 或 2)", primary_pump);
-        cJSON_Delete(root);
-        remove(PRIMARY_PUMP_PERSIST_FILE);  // 刪除損壞文件
-        return FAIL;
-    }
-
-    // 寫回寄存器
-    modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, primary_pump);
-
-    info(debug_tag, "【斷電保持】成功恢復主泵選擇: Pump%d", primary_pump);
-
-    cJSON_Delete(root);
-    return SUCCESS;
-}
-
-/**
- * 更新當前主泵 AUTO 累積時間 (顯示寄存器 45046/45047)
- *
- * 功能:
- * - 當 AUTO_START_STOP = 1 時,累積時間到 45046/45047
- * - 與 Pump1/Pump2 各自的累積時間 (42170-42173) 分開計算
- * - 用於 HMI 顯示和切換判斷
- * - 偵測主泵變化,變化時自動歸零顯示時間
- */
-static void update_display_auto_time(void) {
-    // 讀取 AUTO_START_STOP 狀態
-    uint16_t auto_start_stop = modbus_read_input_register(REG_AUTO_START_STOP);
-    bool is_auto_mode = (auto_start_stop == 1);
-
-    time_t current_time = time(NULL);
-
-    // 【新增】檢測主泵是否被改變 (HMI 手動修改偵測)
-    uint16_t current_primary = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
-    if (current_primary != 1 && current_primary != 2) {
-        current_primary = 1;  // 預設為 Pump1
-    }
-
-    if (current_primary != last_primary_pump_index) {
-        // HMI 手動修改了主泵!
-        info(debug_tag, "偵測到主泵變化: Pump%d -> Pump%d",
-             last_primary_pump_index, current_primary);
-
-        // 歸零顯示時間寄存器
-        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
-        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
-
-        // 重置累積秒數
-        display_tracker.accumulated_seconds = 0;
-
-        // 更新時間戳,防止首次累積出現大量秒數
-        display_tracker.last_update_time = current_time;
-
-        // 更新追蹤值
-        last_primary_pump_index = current_primary;
-
-        info(debug_tag, "主泵顯示時間已歸零 (45046=0, 45047=0)");
-
-        // ========== 保存 HMI 手動修改的主泵狀態到文件 (斷電保持) ==========
-        save_primary_pump_state_to_file();
-        info(debug_tag, "【斷電保持】HMI 手動切換主泵,已保存新狀態: Pump%d", current_primary);
-
-        return;  // 本次循環不進行累積,避免包含過渡時的時間
-    }
-
-    // 初始化追蹤器
-    if (!display_tracker.initialized) {
-        display_tracker.last_update_time = current_time;
-        display_tracker.last_auto_mode_state = is_auto_mode;
-        display_tracker.accumulated_seconds = 0;
-        display_tracker.initialized = true;
-
-        info(debug_tag, "顯示時間追蹤器初始化: AUTO=%d, primary_pump=%d",
-             is_auto_mode, current_primary);
-        return;
-    }
-
-    // 只有在 AUTO 模式且持續運行時才累積時間
-    if (is_auto_mode && display_tracker.last_auto_mode_state) {
-        time_t elapsed = difftime(current_time, display_tracker.last_update_time);
-
-        if (elapsed >= 1) {  // 至少 1 秒
-            // 讀取當前累積時間
-            uint16_t hours = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_HOURS);
-            uint16_t minutes = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_MINUTES);
-
-            // 累積秒數
-            display_tracker.accumulated_seconds += elapsed;
-
-            // 秒進位到分
-            if (display_tracker.accumulated_seconds >= 60) {
-                minutes += display_tracker.accumulated_seconds / 60;
-                display_tracker.accumulated_seconds = display_tracker.accumulated_seconds % 60;
-            }
-
-            // 分進位到時
-            if (minutes >= 60) {
-                hours += minutes / 60;
-                minutes = minutes % 60;
-            }
-
-            // 寫回寄存器
-            modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, hours);
-            modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, minutes);
-
-            display_tracker.last_update_time = current_time;
-
-            debug(debug_tag, "主泵 Pump%d AUTO時間累積: %d小時%d分%d秒 (累積%ld秒)",
-                  current_primary, hours, minutes,
-                  display_tracker.accumulated_seconds, (long)elapsed);
-        }
-    }
-
-    // 更新狀態
-    display_tracker.last_auto_mode_state = is_auto_mode;
-    display_tracker.last_update_time = current_time;
-
-    // ========== 定期保存顯示時間 ==========
-    // 每 5 分鐘保存一次,避免頻繁寫入磁盤
-    if (difftime(current_time, last_display_time_save) >= DISPLAY_TIME_SAVE_INTERVAL) {
-        if (save_display_time_to_file() == SUCCESS) {
-            last_display_time_save = current_time;
-        }
-    }
-}
-
-/**
  * 檢查並執行主泵切換邏輯
- * 根據顯示時間寄存器 (45046/45047) 判斷是否需要切換主泵
- *
- * 切換條件:
- * - REG_CURRENT_PRIMARY_AUTO_HOURS (45046) >= REG_PUMP_SWITCH_HOUR (45034)
- * - 且 REG_CURRENT_PRIMARY_AUTO_MINUTES (45047) = 0
- * - 且 display_tracker.accumulated_seconds <= 1 (精確在整點觸發)
- *
- * 切換動作:
- * 1. 切換主泵編號 (1 ↔ 2)
- * 2. 將 45046/45047 歸零
- * 3. 將 display_tracker.accumulated_seconds 歸零
- * 4. 原始 Pump1/Pump2 累計時間 (42170-42173) 不受影響
+ * 當主泵累計時間達到設定值時,切換主泵
  */
 static void check_and_switch_primary_pump(void) {
+    static time_t last_check_time = 0;
+    time_t current_time = time(NULL);
+
+    // 每 10 分鐘檢查一次 (避免頻繁切換)
+    if (difftime(current_time, last_check_time) < 600) {
+        return;
+    }
+    last_check_time = current_time;
+
     // 讀取切換時數設定 (0 表示停用自動切換)
     uint16_t switch_hour = modbus_read_input_register(REG_PUMP_SWITCH_HOUR);
     if (switch_hour == 0) {
         return;  // 自動切換功能停用
     }
 
-    // 讀取顯示時間寄存器
-    uint16_t display_hours = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_HOURS);
-    uint16_t display_minutes = modbus_read_input_register(REG_CURRENT_PRIMARY_AUTO_MINUTES);
+    // 讀取當前主泵
+    uint16_t current_primary = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
+    if (current_primary != 1 && current_primary != 2) {
+        current_primary = 1;  // 預設為 Pump1
+        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, current_primary);
+    }
 
-    // 檢查切換條件:達到設定時數、分鐘為0、秒數<=1
-    if (display_hours >= switch_hour &&
-        display_minutes == 0 &&
-        display_tracker.accumulated_seconds <= 1) {
+    // 讀取主泵累計時間
+    uint16_t primary_hours = 0;
+    if (current_primary == 1) {
+        primary_hours = modbus_read_input_register(REG_PUMP1_AUTO_MODE_HOURS);
+    } else {
+        primary_hours = modbus_read_input_register(REG_PUMP2_AUTO_MODE_HOURS);
+    }
 
-        // 讀取當前主泵
-        uint16_t current_primary = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
-        if (current_primary != 1 && current_primary != 2) {
-            current_primary = 1;  // 預設為 Pump1
-        }
-
-        // 切換主泵 (1 ↔ 2)
+    // 判斷是否需要切換
+    if (primary_hours >= switch_hour) {
         uint16_t new_primary = (current_primary == 1) ? 2 : 1;
         modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, new_primary);
 
-        // ========== 保存主泵狀態到文件 (斷電保持) ==========
-        save_primary_pump_state_to_file();
+        info(debug_tag, "主泵切換: Pump%d -> Pump%d (累計時間 %d 小時達到設定值 %d 小時)",
+             current_primary, new_primary, primary_hours, switch_hour);
 
-        // 歸零顯示時間寄存器
-        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_HOURS, 0);
-        modbus_write_single_register(REG_CURRENT_PRIMARY_AUTO_MINUTES, 0);
-
-        // 歸零累積秒數
-        display_tracker.accumulated_seconds = 0;
-
-        info(debug_tag, "主泵切換: Pump%d -> Pump%d (顯示時間達到 %d 小時 %d 分,設定值 %d 小時)",
-             current_primary, new_primary, display_hours, display_minutes, switch_hour);
-        info(debug_tag, "顯示時間已歸零,原始 Pump1/Pump2 累計時間不受影響");
-
-        // ========== 立即保存顯示時間 (已歸零) ==========
-        save_display_time_to_file();
-        last_display_time_save = time(NULL);  // 更新保存時間戳
+        // 重置新主泵的累計時間
+        if (new_primary == 1) {
+            modbus_write_single_register(REG_PUMP1_AUTO_MODE_HOURS, 0);
+            modbus_write_single_register(REG_PUMP1_AUTO_MODE_MINUTES, 0);
+        } else {
+            modbus_write_single_register(REG_PUMP2_AUTO_MODE_HOURS, 0);
+            modbus_write_single_register(REG_PUMP2_AUTO_MODE_MINUTES, 0);
+        }
     }
 }
 
@@ -1946,8 +1306,8 @@ static void calculate_basic_pump_control(float pid_output, flow_control_output_t
     // === 讀取主泵選擇 ===
     uint16_t primary_pump = modbus_read_input_register(REG_PRIMARY_PUMP_INDEX);
     if (primary_pump != 1 && primary_pump != 2) {
-        primary_pump = 1;  // 只修改局部變數,不寫回寄存器
-        // 寄存器由初始化函數設定,這裡不應該修改
+        primary_pump = 1;  // 預設 Pump1
+        modbus_write_single_register(REG_PRIMARY_PUMP_INDEX, primary_pump);
     }
 
     int primary_idx = primary_pump - 1;      // 主泵索引 (0 或 1)
@@ -1970,28 +1330,12 @@ static void calculate_basic_pump_control(float pid_output, flow_control_output_t
     if (abs_pid_output < CONTROL_DEADZONE) {
         output->active_pumps[primary_idx] = 1;
         output->pump_speeds[primary_idx] = 30.0f;
+        output->active_pumps[secondary_idx] = secondary_enabled ? 1 : 0;
+        output->pump_speeds[secondary_idx] = secondary_enabled ? 30.0f : 0.0f;
 
-        // 檢查非輪值主泵是否為手動模式
-        if (secondary_enabled) {
-            if (secondary_manual_mode == 1) {
-                // 手動模式：讀取手動速度設定值
-                uint16_t manual_speed = modbus_read_input_register(secondary_speed_reg);
-                output->pump_speeds[secondary_idx] = (float)manual_speed;
-                debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(手動 %d%%)",
-                      primary_pump, (secondary_idx + 1), manual_speed);
-            } else {
-                // 自動模式：固定 30%
-                output->pump_speeds[secondary_idx] = 30.0f;
-                debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(30%%)",
-                      primary_pump, (secondary_idx + 1));
-            }
-            output->active_pumps[secondary_idx] = 1;
-        } else {
-            output->pump_speeds[secondary_idx] = 0.0f;
-            output->active_pumps[secondary_idx] = 0;
-            debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(停止)",
-                  primary_pump, (secondary_idx + 1));
-        }
+        debug(debug_tag, "死區模式: 主泵=Pump%d(30%%), 非輪值=Pump%d(%s)",
+              primary_pump, (secondary_idx + 1),
+              secondary_enabled ? "30%" : "停止");
         return;
     }
 

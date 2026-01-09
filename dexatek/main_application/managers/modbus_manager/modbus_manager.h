@@ -470,7 +470,7 @@ static const uint16_t _MODBUS_DATA_KEEP_LIST[] = {
     1005,
     1006,
     1007,
-    2161, 
+    2161,
     2162,
     2163,
     2164,

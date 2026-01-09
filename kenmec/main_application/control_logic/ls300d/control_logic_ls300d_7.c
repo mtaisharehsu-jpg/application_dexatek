@@ -1,5 +1,5 @@
 /*
- * control_logic_ls80_7.c - LS80 雙DC泵手動控制邏輯 (Control Logic 7: Dual DC Pump Manual Control)
+ * control_logic_ls300d_7.c - LS80 雙DC泵手動控制邏輯 (Control Logic 7: Dual DC Pump Manual Control)
  *
  * 【功能概述】
  * 本模組實現 CDU 系統的雙 DC 泵浦手動控制功能，專注於簡單的手動模式運作。
@@ -26,16 +26,19 @@
  *   - 若 REG_PUMP2_SPEED (45016) 被從 HMI 設定
  *   - 每 1.5 秒送一次 PUMP2 手動設定值給 REG_PUMP2_SPEED
  *
+ * 作者: [DK]
  * 日期: 2025
  */
 
 #include "dexatek/main_application/include/application_common.h"
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
-#include "dexatek/main_application/managers/modbus_manager/modbus_manager.h"
 
-static const char* debug_tag = "ls80_7_2dc_pump";
+// 前向聲明 modbus_manager 函數,避免包含完整 header 的編譯依賴
+extern int modbus_manager_data_mapping_save(void);
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_7.json"
+static const char* debug_tag = "ls300d_7_2dc_pump";
+
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_7.json"
 #define CONFIG_REGISTER_LIST_SIZE 40  // 擴大以容納運轉時間寄存器
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
@@ -78,10 +81,10 @@ static uint32_t PRESSURE_FEEDBACK_REG = 42093;    // 壓力回饋
 
 // ==================== Pump Runtime Registers ====================
 // 泵浦運轉時間記錄寄存器 (斷電保持)
-static uint32_t PUMP1_RUNTIME_SEC_REG = 46031;   // Pump1 運轉時間 - 秒 (0-59)
-static uint32_t PUMP1_RUNTIME_MIN_REG = 46032;   // Pump1 運轉時間 - 分 (0-59)
-static uint32_t PUMP1_RUNTIME_HOUR_REG = 46033;  // Pump1 運轉時間 - 時 (0-23)
-static uint32_t PUMP1_RUNTIME_DAY_REG = 46034;   // Pump1 運轉時間 - 天 (累積)
+static uint32_t PUMP1_RUNTIME_SEC_REG = 46031;   // Pump1 運轉時間 - 秒 (0-59) [修正:改用 46031 避開問題區域]
+static uint32_t PUMP1_RUNTIME_MIN_REG = 46032;   // Pump1 運轉時間 - 分 (0-59) [修正:改用 46032 避開問題區域]
+static uint32_t PUMP1_RUNTIME_HOUR_REG = 46033;  // Pump1 運轉時間 - 時 (0-23) [修正:改用 46033 避開問題區域]
+static uint32_t PUMP1_RUNTIME_DAY_REG = 46034;   // Pump1 運轉時間 - 天 (累積) [修正:改用 46034 避開問題區域]
 
 static uint32_t PUMP2_RUNTIME_SEC_REG = 46035;   // Pump2 運轉時間 - 秒 (0-59) [修正:改用 46035 避開重開機歸零問題]
 static uint32_t PUMP2_RUNTIME_MIN_REG = 46036;   // Pump2 運轉時間 - 分 (0-59) [修正:改用 46036 避開重開機歸零問題]
@@ -326,14 +329,13 @@ static int _register_list_init(void)
     _control_logic_register_list[32].name = REG_PUMP2_RUNTIME_HOUR_STR;
     _control_logic_register_list[32].address_ptr = &PUMP2_RUNTIME_HOUR_REG;
     _control_logic_register_list[32].default_address = PUMP2_RUNTIME_HOUR_REG;
-    //_control_logic_register_list[32].type = CONTROL_LOGIC_REGISTER_READ;
-    _control_logic_register_list[32].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    _control_logic_register_list[32].type = CONTROL_LOGIC_REGISTER_READ;
+    //_control_logic_register_list[32].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
     _control_logic_register_list[33].name = REG_PUMP2_RUNTIME_DAY_STR;
     _control_logic_register_list[33].address_ptr = &PUMP2_RUNTIME_DAY_REG;
     _control_logic_register_list[33].default_address = PUMP2_RUNTIME_DAY_REG;
-    //_control_logic_register_list[33].type = CONTROL_LOGIC_REGISTER_READ;
-    _control_logic_register_list[33].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    _control_logic_register_list[33].type = CONTROL_LOGIC_REGISTER_READ;
 
     // 運轉時間重置寄存器
     _control_logic_register_list[34].name = REG_PUMP1_RUNTIME_RESET_STR;
@@ -362,7 +364,7 @@ static int _register_list_init(void)
     return ret;
 }
 
-int control_logic_ls80_7_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
+int control_logic_ls300d_7_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
 {
     int ret = SUCCESS;
 
@@ -377,7 +379,7 @@ int control_logic_ls80_7_config_get(uint32_t *list_size, control_logic_register_
                             Initialization Function
  ---------------------------------------------------------------------------*/
 
-int control_logic_ls80_7_2dc_pump_control_init(void)
+int control_logic_ls300d_7_2dc_pump_control_init(void)
 {
     info(debug_tag, "初始化2台DC泵手動控制系統...");
 
@@ -930,7 +932,7 @@ static void manage_all_pumps_runtime(void) {
  * @param ptr 控制邏輯結構指標 (本函數未使用)
  * @return 0=成功
  */
-int control_logic_ls80_7_2dc_pump_control(ControlLogic *ptr) {
+int control_logic_ls300d_7_2dc_pump_control(ControlLogic *ptr) {
     if (ptr == NULL) return -1;
 
     // 檢查控制邏輯7是否啟用

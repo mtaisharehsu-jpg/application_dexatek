@@ -1,5 +1,5 @@
 /*
- * control_logic_ls80_6.c - LS80 閥門控制邏輯 (Control Logic 6: Valve Control)
+ * control_logic_ls300d_6.c - LS80 閥門控制邏輯 (Control Logic 6: Valve Control)
  *
  * 【功能概述】
  * 本模組實現 CDU 系統的閥門控制功能,支援手動/自動模式切換。
@@ -11,6 +11,7 @@
  * - 閥門開度範圍: 0-100%
  *
  * 【執行器控制】
+ * - HMI 手動設定 (REG 40046): HMI 手動設定閥門開度 (%) - 新增
  * - 閥門狀態輸出 (REG 40047): 閥門實際狀態 (%)
  * - 閥門命令輸入 (REG 411151): 0-100% 開度設定
  * - 手動/自動模式 (REG 45061): 0=自動, 1=手動
@@ -36,9 +37,9 @@
 // 閥門控制寄存器定義 (依據 CDU 控制系統 Modbus 寄存器定義表)
 // ========================================================================================
 
-static const char* tag = "ls80_6_valve";
+static const char* tag = "ls300d_6_valve";
 
-#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls80_6.json"
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_6.json"
 #define CONFIG_REGISTER_LIST_SIZE 15
 static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
 
@@ -196,7 +197,7 @@ static int _register_list_init(void)
 }
 
 // 取得寄存器配置
-int control_logic_ls80_6_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
+int control_logic_ls300d_6_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
 {
     int ret = SUCCESS;
 
@@ -212,7 +213,7 @@ int control_logic_ls80_6_config_get(uint32_t *list_size, control_logic_register_
 // ========================================================================================
 
 // 初始化函數
-int control_logic_ls80_6_valve_control_init(void) {
+int control_logic_ls300d_6_valve_control_init(void) {
     info(tag, "初始化閥門控制器");
 
     // 初始化寄存器列表
@@ -242,7 +243,7 @@ int control_logic_ls80_6_valve_control_init(void) {
 }
 
 // 主控制函數 - 整合到 control_logic_X 框架
-int control_logic_ls80_6_valve_control(ControlLogic *ptr) {
+int control_logic_ls300d_6_valve_control(ControlLogic *ptr) {
     if (ptr == NULL) {
         return -1;
     }
