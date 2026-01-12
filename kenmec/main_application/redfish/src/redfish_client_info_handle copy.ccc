@@ -19,25 +19,7 @@
 #include <mbedtls/base64.h>
 
 
-static __thread sqlite3 *db = NULL;
-static int open_db_with_settings(const char *path, sqlite3 **out_db)
-{
-    int rc = sqlite3_open(path, out_db);
-    if (rc != SQLITE_OK) return rc;
-    // Busy timeout to wait on locks
-    sqlite3_busy_timeout(*out_db, 5000);
-    // Prefer WAL journal mode for better concurrency (ignore errors on older builds)
-    char *err_msg = NULL;
-    sqlite3_exec(*out_db, "PRAGMA journal_mode=WAL;", NULL, NULL, &err_msg);
-    if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
-    // Synchronous=NORMAL is a good balance with WAL
-    sqlite3_exec(*out_db, "PRAGMA synchronous=NORMAL;", NULL, NULL, &err_msg);
-    if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
-    return SQLITE_OK;
-}
-
-// Route all local sqlite3_open calls through our settings wrapper
-#define sqlite3_open(PATH, DBP) open_db_with_settings((PATH), (DBP))
+static sqlite3 *db = NULL;
 // SecurityPolicy table helpers
 static int ensure_security_policy_table(sqlite3 *ldb)
 {

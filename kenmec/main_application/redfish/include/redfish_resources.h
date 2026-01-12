@@ -62,6 +62,8 @@ int handle_cdu_oem_control_logics_member(const char *cdu_id, const char *member_
 int handle_cdu_oem_control_logics_action_read(const char *cdu_id, const char *member_id, const http_request_t *request, http_response_t *response);
 int handle_cdu_oem_control_logics_action_write(const char *cdu_id, const char *member_id, const http_request_t *request, http_response_t *response);
 
+// int handle_cdu_oem_log_file_get(const char *cdu_id, const http_request_t *request, http_response_t *response);
+
 int handle_manager_reset_action(const char *manager_id, const http_request_t *request, http_response_t *response);
 
 int handle_certificate_service(http_response_t *response);
@@ -71,6 +73,8 @@ int handle_manager_security_policy_trusted_certificates(http_response_t *respons
 int handle_manager_security_policy_trusted_certificate(const char *cert_id, http_response_t *response);
 int handle_update_service(http_response_t *response);
 int handle_update_service_multipart_upload(const http_request_t *request, http_response_t *response);
+int handle_cdu_oem_ioboard_ota(const char *cdu_id, const char *member_id, const http_request_t *request, http_response_t *response);
+int handle_token_invalid(http_response_t *response);
 
 // Certificate parsing function
 int redfish_parse_certificate_info(const char *pem_cert,

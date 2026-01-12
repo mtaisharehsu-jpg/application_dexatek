@@ -1,7 +1,6 @@
 #include <string.h>
 #include <errno.h>
 #include <sys/socket.h>
-#include <sys/time.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -136,9 +135,6 @@ int tls_server_init(tls_server_context_t *ctx, const char *cert_file, const char
         printf("Failed to configure SSL defaults: %s\n", tls_error_string(ret));
         return ERROR_TLS;
     }
-
-    // Set read timeout to 5000ms (5 seconds) for operations using f_recv_timeout
-    mbedtls_ssl_conf_read_timeout(&ctx->conf, 5000);
 
     // Set certificate and private key
     ret = mbedtls_ssl_conf_own_cert(&ctx->conf, &ctx->cert, &ctx->pkey);
@@ -278,22 +274,8 @@ int tls_server_accept_client(tls_server_context_t *ctx, int *client_fd) {
 
 
 int tls_server_establish_ssl(tls_server_context_t *ctx, int client_fd, mbedtls_ssl_context *ssl, mbedtls_net_context *client_net_ctx) {
+    (void)client_fd;
     int ret;
-
-    // Set socket-level timeout to ensure reliable timeout behavior
-    struct timeval timeout;
-    timeout.tv_sec = 5;  // 5 seconds
-    timeout.tv_usec = 0;
-    
-    if (setsockopt(client_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(struct timeval)) < 0) {
-        printf("Failed to set socket receive timeout: %s\n", strerror(errno));
-        return ERROR_NETWORK;
-    }
-    
-    if (setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(struct timeval)) < 0) {
-        printf("Failed to set socket send timeout: %s\n", strerror(errno));
-        return ERROR_NETWORK;
-    }
 
     // Initialize SSL context for this connection
     mbedtls_ssl_init(ssl);
@@ -305,9 +287,8 @@ int tls_server_establish_ssl(tls_server_context_t *ctx, int client_fd, mbedtls_s
         return ERROR_TLS;
     }
 
-    // Set the underlying socket using proper mbedTLS BIO functions with timeout support
-    // Provide mbedtls_net_recv_timeout so that reads can time out after 5 seconds
-    mbedtls_ssl_set_bio(ssl, client_net_ctx, mbedtls_net_send, mbedtls_net_recv, mbedtls_net_recv_timeout);
+    // Set the underlying socket using proper mbedTLS BIO functions
+    mbedtls_ssl_set_bio(ssl, client_net_ctx, mbedtls_net_send, mbedtls_net_recv, NULL);
 
     // Perform SSL handshake
     ret = mbedtls_ssl_handshake(ssl);
@@ -333,12 +314,6 @@ int tls_server_read(mbedtls_ssl_context *ssl, char *buffer, size_t buffer_size) 
         if (bytes_read == MBEDTLS_ERR_SSL_WANT_READ || bytes_read == MBEDTLS_ERR_SSL_WANT_WRITE) {
             // Non-blocking operation, try again - return a special value to indicate retry needed
             return MBEDTLS_ERR_SSL_WANT_READ;
-        }
-        
-        if (bytes_read == MBEDTLS_ERR_SSL_TIMEOUT) {
-            // Timeout occurred - this should now work with socket-level timeout
-            printf("SSL read timeout after 5 seconds\n");
-            return ERROR_NETWORK;
         }
         
         // Don't print expected connection closure errors

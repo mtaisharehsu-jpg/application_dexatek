@@ -83,10 +83,10 @@ int handle_client_connection(int client_fd) {
         return ret;
     }
     
-    // Read request from client (5 second timeout)
+    // Read request from client
     int bytes_read = tls_server_read(&ssl, request_buffer, sizeof(request_buffer));
     if (bytes_read <= 0) {
-        error(tag, "Failed to read request from client %d", bytes_read);
+        error(tag, "Failed to read request from client");
         tls_server_close_client(&ssl, client_fd);
         return ERROR_NETWORK;
     }
@@ -96,7 +96,7 @@ int handle_client_connection(int client_fd) {
     // Parse HTTP request
     ret = parse_http_request(request_buffer, &request, 1);  // HTTPS
     if (ret != SUCCESS) {
-        error(tag, "Failed to parse HTTP request %d", ret);
+        error(tag, "Failed to parse HTTP request");
         tls_server_close_client(&ssl, client_fd);
         return ret;
     }
@@ -112,12 +112,7 @@ int handle_client_connection(int client_fd) {
     }
 
     int is_upload = 0;
-
-    // upload URI: /UpdateFirmwareMultipart or /Oem/Kenmec/IOBoards/x/OTA
-    if (strcmp(request.method, HTTP_METHOD_POST) == 0 && 
-        (strstr(request.path, "/UpdateFirmwareMultipart") != NULL || 
-        (strstr(request.path, "/Oem/Kenmec/IOBoards/") != NULL && strstr(request.path, "/OTA") != NULL))
-        ) {
+    if (strcmp(request.method, HTTP_METHOD_POST) == 0 && strstr(request.path, "/UpdateFirmwareMultipart") != NULL) {
         is_upload = 1;
     }
 
@@ -153,19 +148,14 @@ int handle_client_connection(int client_fd) {
             request.content_length = expected_len;
         }
     } else {
-        // Stream multipart body to appropriate temp file path
-        if (strstr(request.path, "/Oem/Kenmec/IOBoards/") != NULL && strstr(request.path, "/OTA") != NULL) {
-            strcpy(request.upload_tmp_path, "/tmp/upload.bin");
-        } else {
-            system_firmware_file_path(request.upload_tmp_path);
-        }
+        // Stream multipart body to fixed firmware file path
+        system_firmware_file_path(request.upload_tmp_path);
         int tmp_fd = open(request.upload_tmp_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
         if (tmp_fd < 0) {
             printf("Failed to create temp upload file (HTTPS)\n");
             tls_server_close_client(&ssl, client_fd);
             return ERROR_NETWORK;
         }
-        int last_percent = -1;
         // Write buffered bytes already read into request.body
         if (request.content_length > 0) {
             if (write(tmp_fd, request.body, (size_t)request.content_length) != request.content_length) {
@@ -173,15 +163,6 @@ int handle_client_connection(int client_fd) {
                 close(tmp_fd);
                 tls_server_close_client(&ssl, client_fd);
                 return ERROR_NETWORK;
-            }
-            // Print initial progress (only on new whole percent)
-            if (expected_len > 0) {
-                int received_total = request.content_length;
-                int percent = (int)((long long)received_total * 100 / expected_len);
-                if (percent > last_percent) {
-                    last_percent = percent;
-                    printf("Receiving upload (HTTPS): %d/%d bytes (%d%%)\n", received_total, expected_len, percent);
-                }
             }
         }
         int remaining = expected_len - request.content_length;
@@ -214,15 +195,6 @@ int handle_client_connection(int client_fd) {
                 return ERROR_NETWORK;
             }
             remaining -= n;
-            // Print incremental progress (only on new whole percent)
-            if (expected_len > 0) {
-                int received_total = expected_len - remaining;
-                int percent = (int)((long long)received_total * 100 / expected_len);
-                if (percent > last_percent) {
-                    last_percent = percent;
-                    printf("Receiving upload (HTTPS): %d/%d bytes (%d%%)\n", received_total, expected_len, percent);
-                }
-            }
         }
         fsync(tmp_fd);
         close(tmp_fd);
@@ -342,6 +314,7 @@ static TaskReturn _redfish_manager_process(void *param)
     }
     
     debug(tag, "Server initialized successfully. Waiting for connections...");
+    debug(tag, "Press Ctrl+C to stop the server");
 
     db_init();
 
@@ -510,9 +483,6 @@ int redfish_deinit(void)
     // Stop mDNS services
     mdns_service_stop(&_mdns_http_config);
     mdns_service_stop(&_mdns_https_config);
-
-    tls_server_cleanup(&g_tls_ctx);
-    http_server_cleanup();
     
     // Clean up thread
     _thread_aborted = TRUE;
