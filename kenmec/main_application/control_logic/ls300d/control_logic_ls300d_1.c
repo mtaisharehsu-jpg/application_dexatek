@@ -1,0 +1,1438 @@
+/*
+ * control_logic_ls300d_1.c - LS300D 溫度控制邏輯 (Control Logic 1: Temperature Control)
+ *
+ * 【LS300D 特點】
+ * LS300D 機種在 LS80 基礎上增加了雙備援感測器設計,提供更高的系統可靠性。
+ * 所有溫度感測器 (T1-T4) 都採用 A/B 雙備援配置,實現容錯運行。
+ *
+ * 【功能概述】
+ * 本模組實現 LS300D 系統的溫度控制功能,通過 PID 演算法維持冷卻水出水溫度穩定,
+ * 結合自適應參數調整、雙備援感測器容錯和多泵浦協調策略,確保系統高可靠性運行。
+ *
+ * 【控制目標】
+ * - 維持二次側出水溫度在設定值 (T_set)
+ * - 預設目標溫度: 25.0°C
+ * - 溫度容差: ±0.5°C
+ *
+ * 【感測器配置 - 雙備援設計】
+ * - T1a/T1b (REG 412554/412556): 溫度感測器1 (A/B雙備援, 0.1°C 精度)
+ * - T2a/T2b (REG 412558/412560): 溫度感測器2 (A/B雙備援, 0.1°C 精度)
+ * - T3a/T3b (REG 412562/412564): 溫度感測器3 (A/B雙備援, 0.1°C 精度)
+ * - T4a/T4b (REG 412566/412568): 溫度感測器4 (A/B雙備援, 0.1°C 精度)
+ * - F2 (REG 42063): 二次側流量回饋 (0.1 L/min 精度)
+ *
+ * 【雙備援容錯機制】
+ * - 正常運行: 使用平均值 (Ta + Tb) / 2
+ * - 單一失效: 使用正常感測器值 + 發出警報
+ * - 雙備援失效: 錯誤狀態,停止自動控制
+ * - 差異檢測閾值: |Ta - Tb| > 2.0°C 時發出警告
+ *
+ * 【執行器控制】
+ * - Pump1/2: 泵浦速度 0-100% (通過寄存器 45015/45016 控制)
+ * - 比例閥: 開度 0-100% (REG 411151)
+ * - 泵浦啟停: DO 控制 (REG 411101/411102)
+ *
+ * 【控制模式】
+ * - 手動模式 (TEMP_CONTROL_MODE_MANUAL = 0): 僅監控,操作員手動調整
+ * - 自動模式 (TEMP_CONTROL_MODE_AUTO = 1): PID 自動控制 + 泵浦協調
+ *
+ * 【泵浦協調策略】
+ * 根據 PID 輸出和溫度誤差動態調整:
+ * - 容量 ≤ 35%: 單泵運行 (輪換主泵)
+ * - 容量 > 35% 且 ≤ 70%: 雙泵運行 (主泵+輔泵)
+ * - 泵浦輪換週期: 24小時 (1440個控制週期)
+ *
+ * 【PID 參數】
+ * - Kp: 15.0 (比例增益 - 快速響應溫度變化)
+ * - Ki: 0.8 (積分增益 - 消除穩態誤差)
+ * - Kd: 2.5 (微分增益 - 抑制溫度超調)
+ * - 積分限幅: 防止飽和,動態調整範圍
+ *
+ * 【自適應調整】
+ * - 大誤差 (>2°C): 增加 Kp, 減少 Ki → 快速響應
+ * - 小誤差 (<0.2°C): 減少 Kp, 增加 Ki → 提高穩態精度
+ *
+ * 【安全保護】
+ * - 最高溫度限制: 40.0°C
+ * - 最低溫度限制: 15.0°C
+ * - 最小流量: 0.0 L/min
+ * - 進出水溫差異常: >10.0°C 觸發警告
+ *
+ * 
+ * 日期: 2025
+ */
+
+#include "dexatek/main_application/include/application_common.h"
+
+#include "cJSON.h"
+
+#include "kenmec/main_application/control_logic/control_logic_manager.h"
+
+#define CONFIG_REGISTER_FILE_PATH "/usrdata/register_configs_ls300d_1.json"
+#define CONFIG_REGISTER_LIST_SIZE 23  // 新增 4 個 PID 參數寄存器 (45501-45503, 45900)
+static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIST_SIZE];
+
+static const char *debug_tag = "ls300d_1_temp";
+
+typedef enum {
+    TEMP_CONTROL_MODE_MANUAL = 0,
+    TEMP_CONTROL_MODE_AUTO = 1
+} temp_control_mode_t;
+
+typedef enum {
+    SAFETY_STATUS_SAFE = 0,
+    SAFETY_STATUS_WARNING = 1,
+    SAFETY_STATUS_EMERGENCY = 2
+} safety_status_t;
+
+/**
+ * @brief 雙備援感測器狀態
+ */
+typedef enum {
+    SENSOR_STATUS_OK = 0,        // 雙備援正常運行
+    SENSOR_STATUS_DEGRADED = 1,  // 單一失效,降級運行
+    SENSOR_STATUS_FAILED = 2     // 雙備援全部失效
+} sensor_status_t;
+
+/**
+ * @brief 雙備援溫度感測器資料結構
+ */
+typedef struct {
+    float value_a;           // A 感測器讀值
+    float value_b;           // B 感測器讀值
+    float average;           // 平均值 (Ta + Tb) / 2
+    bool a_valid;            // A 感測器有效性
+    bool b_valid;            // B 感測器有效性
+    sensor_status_t status;  // 感測器狀態
+    bool diff_warning;       // 差異過大警告
+} redundant_temp_sensor_t;
+
+/**
+ * @brief LS300D 感測器資料 (含雙備援)
+ */
+typedef struct {
+    redundant_temp_sensor_t t1;  // T1a/T1b
+    redundant_temp_sensor_t t2;  // T2a/T2b
+    redundant_temp_sensor_t t3;  // T3a/T3b
+    redundant_temp_sensor_t t4;  // T4a/T4b
+    float flow_rate;             // F2 流量
+    time_t timestamp;
+} sensor_data_t;
+
+typedef struct {
+    float kp;
+    float ki;
+    float kd;
+    float integral;
+    float previous_error;
+    time_t previous_time;
+    float output_min;
+    float output_max;
+} pid_controller_t;
+
+typedef struct {
+    float valve_opening;       // 比例閥開度 0-100%
+} control_output_t;
+
+static pid_controller_t temperature_pid = {
+    .kp = 15.0f,
+    .ki = 0.8f,
+    .kd = 2.5f,
+    .integral = 0.0f,
+    .previous_error = 0.0f,
+    .previous_time = 0,
+    .output_min = 0.0f,
+    .output_max = 100.0f
+};
+
+// 追蹤 enable 狀態，用於檢測從啟用變為停用
+static uint16_t previous_enable_status = 0;
+
+// 追蹤自動啟停狀態，用於檢測邊緣觸發（0→1）
+static uint16_t previous_auto_start_stop = 0;
+
+// 追蹤比例閥手動模式狀態,用於檢測邊緣觸發(0→1 和 1→0)
+static uint16_t previous_valve_manual_mode = 0;
+
+// Modbus寄存器定義 (根據CDU系統規格)
+
+static uint32_t REG_CONTROL_LOGIC_1_ENABLE = 41001; // 控制邏輯1啟用
+
+// 環境監測暫存器 - 露點計算
+static uint32_t REG_ENV_TEMP = 42021;    // 環境溫度
+static uint32_t REG_HUMIDITY = 42022;    // 環境濕度
+static uint32_t REG_DEW_POINT = 42024;   // 露點溫度輸出
+static uint32_t REG_DP_CORRECT = 45004;  // 露點校正值
+
+// LS300D 雙備援溫度感測器寄存器
+static uint32_t REG_T1A_TEMP = 412554;  // T1a 溫度
+static uint32_t REG_T1B_TEMP = 412556;  // T1b 溫度
+static uint32_t REG_T2A_TEMP = 412558;  // T2a 溫度
+static uint32_t REG_T2B_TEMP = 412560;  // T2b 溫度
+static uint32_t REG_T3A_TEMP = 412562;  // T3a 溫度
+static uint32_t REG_T3B_TEMP = 412564;  // T3b 溫度
+static uint32_t REG_T4A_TEMP = 412566;  // T4a 溫度
+static uint32_t REG_T4B_TEMP = 412568;  // T4b 溫度
+
+// 為了與 register list 兼容,定義 T2/T4 映射到 A 感測器 (用於配置系統)
+static uint32_t REG_T2_TEMP = 412558;  // T2 = T2a (用於 register list)
+static uint32_t REG_T4_TEMP = 412566;  // T4 = T4a (用於 register list)
+
+// 壓力感測器寄存器 (暫時保留 LS80 的定義,後續會更新為雙備援)
+static uint32_t REG_P3_PRESSURE = 42084;  // P3 壓力
+static uint32_t REG_P4_PRESSURE = 42085;  // P4 壓力
+
+static uint32_t REG_F2_FLOW = 42063;    // F2流量
+
+static uint32_t REG_TARGET_TEMP = 45001; // 目標溫度設定
+static uint32_t REG_FLOW_SETPOINT = 45003; // 流量設定
+static uint32_t REG_TEMP_FOLLOW_DEW_POINT = 45010; // 溫度跟隨露點模式 (0=保護模式, 1=跟隨模式)
+static uint32_t REG_TEMP_CONTROL_MODE = 45009; // 溫度控制模式 (0=手動, 1=自動)
+static uint32_t REG_AUTO_START_STOP = 45020; // 自動啟停開關 (0=停用, 1=啟用)
+
+static uint32_t REG_VALVE_MANUAL_MODE = 45061; // 比例閥手動模式
+
+static uint32_t REG_VALVE_OPENING = 411151; // 比例閥開度設定 (%)
+
+// 溫度限制暫存器 (HMI 可設定，斷電保持)
+static uint32_t REG_T_HIGH_ALARM = 46001;  // 最高溫度限制 (預設 50.0°C)
+static uint32_t REG_T_LOW_ALARM = 46002;   // 最低溫度限制 (預設 10.0°C)
+
+// PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
+static uint32_t REG_PID_TEMP_KP = 45501;              // 溫度控制 Kp (預設 1500 → 15.0)
+static uint32_t REG_PID_TEMP_KI = 45502;              // 溫度控制 Ki (預設 80 → 0.8)
+static uint32_t REG_PID_TEMP_KD = 45503;              // 溫度控制 Kd (預設 250 → 2.5)
+static uint32_t REG_RESTORE_DEFAULT_PID_TEMP = 45900; // 恢復 PID 預設值 (寫入 1 觸發)
+
+// 安全限制參數
+// 註: MAX_TEMP_LIMIT 和 MIN_TEMP_LIMIT 已改為從寄存器 46001/46002 讀取
+// #define MAX_TEMP_LIMIT         40.0f   // 最高溫度限制 (已廢棄，改用 REG_T_HIGH_ALARM)
+// #define MIN_TEMP_LIMIT         15.0f   // 最低溫度限制 (已廢棄，改用 REG_T_LOW_ALARM)
+#define MIN_FLOW_RATE          0.0f  // 最小流量 L/min
+#define TEMP_TOLERANCE         0.5f    // 溫度容差 ±0.5°C
+#define TARGET_TEMP_DEFAULT    25.0f   // 預設目標溫度
+
+// 函數宣告
+static redundant_temp_sensor_t read_redundant_temp_sensor(uint32_t reg_a, uint32_t reg_b, const char *name);
+static int read_sensor_data(sensor_data_t *data);
+// static safety_status_t perform_safety_checks(const sensor_data_t *data);  // 暫時未使用
+// static void emergency_shutdown(void);  // 暫時未使用
+static float calculate_pid_output(pid_controller_t *pid, float setpoint, float current_value);
+// static void reset_pid_controller(pid_controller_t *pid);  // 暫時未使用
+static void adjust_pid_parameters(pid_controller_t *pid, float error);
+static int execute_manual_control_mode(void);
+static int execute_automatic_control_mode(const sensor_data_t *data);
+static float calculate_valve_opening(float pid_output, const sensor_data_t *data);
+
+// 露點計算函式宣告
+static float calculate_dew_point(float temperature, float humidity, float correction);
+static void read_and_calculate_dew_point(void);
+static void apply_dew_point_tracking(float *target_temp);
+
+// 自動啟停函式宣告
+static void handle_auto_start_stop(void);
+
+// 比例閥手動模式切換函式宣告
+static void handle_valve_manual_mode_switch(void);
+
+// PID 參數管理函式宣告
+static void load_pid_parameters_from_registers(void);
+static void restore_default_pid_parameters(void);
+
+static uint16_t modbus_read_input_register(uint32_t address) {    
+    uint16_t value = 0;
+    int ret = control_logic_read_holding_register(address, &value);
+
+    if (ret != SUCCESS) {
+        value = 0xFFFF;
+    }
+
+    return value;
+}
+
+static bool modbus_write_single_register(uint32_t address, uint16_t value) {
+
+    int ret = control_logic_write_register(address, value, 2000);
+
+    return (ret == SUCCESS)? true : false;
+}
+
+/**
+ * 切換到手動模式並保存最後設定值
+ *
+ * 當 control_logic_1 從啟用變為停用時調用
+ */
+static void switch_to_manual_mode_with_last_speed(void) {
+    info(debug_tag, "control_logic_1 停用，切換到手動模式...");
+
+    // 設定比例閥為手動模式
+    modbus_write_single_register(REG_VALVE_MANUAL_MODE, 1);
+
+    info(debug_tag, "已切換到手動模式");
+}
+
+static int _register_list_init(void)
+{
+    int ret = SUCCESS;
+
+    // setup default register list
+    _control_logic_register_list[0].name = REG_CONTROL_LOGIC_1_ENABLE_STR;
+    _control_logic_register_list[0].address_ptr = &REG_CONTROL_LOGIC_1_ENABLE, 
+    _control_logic_register_list[0].default_address = REG_CONTROL_LOGIC_1_ENABLE,
+    _control_logic_register_list[0].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[1].name = REG_F2_FLOW_STR;
+    _control_logic_register_list[1].address_ptr = &REG_F2_FLOW,
+    _control_logic_register_list[1].default_address = REG_F2_FLOW,
+    _control_logic_register_list[1].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[2].name = REG_P4_PRESSURE_STR;
+    _control_logic_register_list[2].address_ptr = &REG_P4_PRESSURE, 
+    _control_logic_register_list[2].default_address = REG_P4_PRESSURE,
+    _control_logic_register_list[2].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[3].name = REG_P3_PRESSURE_STR;
+    _control_logic_register_list[3].address_ptr = &REG_P3_PRESSURE, 
+    _control_logic_register_list[3].default_address = REG_P3_PRESSURE,
+    _control_logic_register_list[3].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[4].name = REG_TARGET_TEMP_STR;
+    _control_logic_register_list[4].address_ptr = &REG_TARGET_TEMP,
+    _control_logic_register_list[4].default_address = REG_TARGET_TEMP,
+    _control_logic_register_list[4].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[5].name = REG_FLOW_SETPOINT_STR;
+    _control_logic_register_list[5].address_ptr = &REG_FLOW_SETPOINT,
+    _control_logic_register_list[5].default_address = REG_FLOW_SETPOINT,
+    _control_logic_register_list[5].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[6].name = REG_TEMP_CONTROL_MODE_STR;
+    _control_logic_register_list[6].address_ptr = &REG_TEMP_CONTROL_MODE,
+    _control_logic_register_list[6].default_address = REG_TEMP_CONTROL_MODE,
+    _control_logic_register_list[6].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[7].name = REG_VALVE_MANUAL_MODE_STR;
+    _control_logic_register_list[7].address_ptr = &REG_VALVE_MANUAL_MODE,
+    _control_logic_register_list[7].default_address = REG_VALVE_MANUAL_MODE,
+    _control_logic_register_list[7].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[8].name = REG_T4_TEMP_STR;
+    _control_logic_register_list[8].address_ptr = &REG_T4_TEMP,
+    _control_logic_register_list[8].default_address = REG_T4_TEMP,
+    _control_logic_register_list[8].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[9].name = REG_T2_TEMP_STR;
+    _control_logic_register_list[9].address_ptr = &REG_T2_TEMP,
+    _control_logic_register_list[9].default_address = REG_T2_TEMP,
+    _control_logic_register_list[9].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[10].name = REG_VALVE_SETPOINT_STR;
+    _control_logic_register_list[10].address_ptr = &REG_VALVE_OPENING,
+    _control_logic_register_list[10].default_address = REG_VALVE_OPENING,
+    _control_logic_register_list[10].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // 環境監測暫存器 - 露點計算
+    _control_logic_register_list[11].name = REG_ENV_TEMP_STR;
+    _control_logic_register_list[11].address_ptr = &REG_ENV_TEMP,
+    _control_logic_register_list[11].default_address = REG_ENV_TEMP,
+    _control_logic_register_list[11].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[12].name = REG_HUMIDITY_STR;
+    _control_logic_register_list[12].address_ptr = &REG_HUMIDITY,
+    _control_logic_register_list[12].default_address = REG_HUMIDITY,
+    _control_logic_register_list[12].type = CONTROL_LOGIC_REGISTER_READ;
+
+    _control_logic_register_list[13].name = REG_DEW_POINT_STR;
+    _control_logic_register_list[13].address_ptr = &REG_DEW_POINT,
+    _control_logic_register_list[13].default_address = REG_DEW_POINT,
+    _control_logic_register_list[13].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[14].name = REG_DP_CORRECT_STR;
+    _control_logic_register_list[14].address_ptr = &REG_DP_CORRECT,
+    _control_logic_register_list[14].default_address = REG_DP_CORRECT,
+    _control_logic_register_list[14].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[15].name = REG_TEMP_FOLLOW_DEW_POINT_STR;
+    _control_logic_register_list[15].address_ptr = &REG_TEMP_FOLLOW_DEW_POINT,
+    _control_logic_register_list[15].default_address = REG_TEMP_FOLLOW_DEW_POINT,
+    _control_logic_register_list[15].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[16].name = REG_AUTO_START_STOP_STR;
+    _control_logic_register_list[16].address_ptr = &REG_AUTO_START_STOP,
+    _control_logic_register_list[16].default_address = REG_AUTO_START_STOP,
+    _control_logic_register_list[16].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // 溫度限制暫存器 (HMI 可設定，斷電保持)
+    _control_logic_register_list[17].name = REG_T_HIGH_ALARM_STR;
+    _control_logic_register_list[17].address_ptr = &REG_T_HIGH_ALARM,
+    _control_logic_register_list[17].default_address = REG_T_HIGH_ALARM,
+    _control_logic_register_list[17].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[18].name = REG_T_LOW_ALARM_STR;
+    _control_logic_register_list[18].address_ptr = &REG_T_LOW_ALARM,
+    _control_logic_register_list[18].default_address = REG_T_LOW_ALARM,
+    _control_logic_register_list[18].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // PID 參數暫存器 (HMI 可設定，斷電保持，精度 ×100)
+    _control_logic_register_list[19].name = "REG_PID_TEMP_KP";
+    _control_logic_register_list[19].address_ptr = &REG_PID_TEMP_KP,
+    _control_logic_register_list[19].default_address = REG_PID_TEMP_KP,
+    _control_logic_register_list[19].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[20].name = "REG_PID_TEMP_KI";
+    _control_logic_register_list[20].address_ptr = &REG_PID_TEMP_KI,
+    _control_logic_register_list[20].default_address = REG_PID_TEMP_KI,
+    _control_logic_register_list[20].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[21].name = "REG_PID_TEMP_KD";
+    _control_logic_register_list[21].address_ptr = &REG_PID_TEMP_KD,
+    _control_logic_register_list[21].default_address = REG_PID_TEMP_KD,
+    _control_logic_register_list[21].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    _control_logic_register_list[22].name = "REG_RESTORE_DEFAULT_PID_TEMP";
+    _control_logic_register_list[22].address_ptr = &REG_RESTORE_DEFAULT_PID_TEMP,
+    _control_logic_register_list[22].default_address = REG_RESTORE_DEFAULT_PID_TEMP,
+    _control_logic_register_list[22].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+
+    // try to load register array from file
+    uint32_t list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
+    ret = control_logic_register_load_from_file(CONFIG_REGISTER_FILE_PATH, _control_logic_register_list, list_size);
+    debug(debug_tag, "load register array from file %s, ret %d", CONFIG_REGISTER_FILE_PATH, ret);
+
+    return ret;
+}
+
+int control_logic_ls300d_1_temperature_control_init(void)
+{
+    _register_list_init();
+
+    // 【需求A】系統開機後自動啟用控制邏輯1
+    bool enable_success = modbus_write_single_register(REG_CONTROL_LOGIC_1_ENABLE, 1);
+    if (enable_success) {
+        info(debug_tag, "【開機初始化】自動啟用 control_logic_1 (REG_CONTROL_LOGIC_1_ENABLE = 1)");
+        // 初始化前次狀態為 1，避免首次執行時誤觸發狀態變化處理
+        previous_enable_status = 1;
+    } else {
+        error(debug_tag, "【開機初始化】啟用 control_logic_1 失敗");
+    }
+
+    // 【需求B】系統開機後設定為手動模式
+    bool mode_success = modbus_write_single_register(REG_TEMP_CONTROL_MODE, 0);
+    if (mode_success) {
+        info(debug_tag, "【開機初始化】設定溫度控制模式為手動 (REG_TEMP_CONTROL_MODE = 0)");
+    } else {
+        error(debug_tag, "【開機初始化】設定手動模式失敗");
+    }
+
+    // 【需求C】設定溫度限制預設值 (HMI 可修改，斷電保持)
+    // 策略: 先讀取當前值，只在值為 0 或讀取失敗時才設置預設值
+    //       如果已有有效值則保留(用戶透過 HMI 設定的值)
+
+    // 讀取最高溫度限制
+    uint16_t current_high = modbus_read_input_register(REG_T_HIGH_ALARM);
+    if (current_high == 0 || current_high == 0xFFFF) {
+        // 寄存器為空或讀取失敗，設置預設值
+        bool t_high_success = modbus_write_single_register(REG_T_HIGH_ALARM, 50);  // 50.0°C
+        if (t_high_success) {
+            info(debug_tag, "【開機初始化】設定最高溫度限制預設值: 50.0°C");
+        } else {
+            error(debug_tag, "【開機初始化】設定最高溫度限制失敗");
+        }
+    } else {
+        // 寄存器已有有效值，保留現有設定 (HMI 寫入的值)
+        float temp_c = current_high / 10.0f;
+        info(debug_tag, "【開機初始化】最高溫度限制已設置: %.1f°C (保留現有值)", temp_c);
+    }
+
+    // 讀取最低溫度限制
+    uint16_t current_low = modbus_read_input_register(REG_T_LOW_ALARM);
+    if (current_low == 0 || current_low == 0xFFFF) {
+        // 寄存器為空或讀取失敗，設置預設值
+        bool t_low_success = modbus_write_single_register(REG_T_LOW_ALARM, 10);    // 10.0°C
+        if (t_low_success) {
+            info(debug_tag, "【開機初始化】設定最低溫度限制預設值: 10.0°C");
+        } else {
+            error(debug_tag, "【開機初始化】設定最低溫度限制失敗");
+        }
+    } else {
+        // 寄存器已有有效值，保留現有設定 (HMI 寫入的值)
+        float temp_c = current_low / 10.0f;
+        info(debug_tag, "【開機初始化】最低溫度限制已設置: %.1f°C (保留現有值)", temp_c);
+    }
+
+    // 【需求D】初始化 PID 參數寄存器 (HMI 可修改，斷電保持，精度 ×100)
+    // 策略: 先讀取當前值，只在值為 0 或讀取失敗時才設置預設值
+    //       如果已有有效值則保留(用戶透過 HMI 設定的值)
+
+    // 讀取 Kp 參數
+    uint16_t current_kp = modbus_read_input_register(REG_PID_TEMP_KP);
+    if (current_kp == 0 || current_kp == 0xFFFF) {
+        bool kp_success = modbus_write_single_register(REG_PID_TEMP_KP, 1500);  // 15.0
+        if (kp_success) {
+            info(debug_tag, "【開機初始化】設定 PID Kp 預設值: 15.0");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kp 失敗");
+        }
+    } else {
+        float kp_value = current_kp / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kp 已設置: %.2f (保留現有值)", kp_value);
+    }
+
+    // 讀取 Ki 參數
+    uint16_t current_ki = modbus_read_input_register(REG_PID_TEMP_KI);
+    if (current_ki == 0 || current_ki == 0xFFFF) {
+        bool ki_success = modbus_write_single_register(REG_PID_TEMP_KI, 80);    // 0.8
+        if (ki_success) {
+            info(debug_tag, "【開機初始化】設定 PID Ki 預設值: 0.8");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Ki 失敗");
+        }
+    } else {
+        float ki_value = current_ki / 100.0f;
+        info(debug_tag, "【開機初始化】PID Ki 已設置: %.2f (保留現有值)", ki_value);
+    }
+
+    // 讀取 Kd 參數
+    uint16_t current_kd = modbus_read_input_register(REG_PID_TEMP_KD);
+    if (current_kd == 0 || current_kd == 0xFFFF) {
+        bool kd_success = modbus_write_single_register(REG_PID_TEMP_KD, 250);   // 2.5
+        if (kd_success) {
+            info(debug_tag, "【開機初始化】設定 PID Kd 預設值: 2.5");
+        } else {
+            error(debug_tag, "【開機初始化】設定 PID Kd 失敗");
+        }
+    } else {
+        float kd_value = current_kd / 100.0f;
+        info(debug_tag, "【開機初始化】PID Kd 已設置: %.2f (保留現有值)", kd_value);
+    }
+
+    // 初始化恢復標誌為 0
+    modbus_write_single_register(REG_RESTORE_DEFAULT_PID_TEMP, 0);
+
+    return SUCCESS;
+}
+
+/**
+ * CDU溫度控制主要函數 (版本 1.1)
+ *
+ * 【函數功能】
+ * 這是溫度控制邏輯的主入口函數,由控制邏輯管理器週期性調用。
+ * 實現完整的溫度控制流程: 啟用檢查 → 感測器讀取 → 模式判斷 → 控制執行 → 泵浦輪換
+ *
+ * 【執行流程】
+ * 1. 檢查控制邏輯是否啟用 (REG_CONTROL_LOGIC_1_ENABLE)
+ * 2. 讀取所有溫度、流量、壓力感測器數據
+ * 3. 讀取控制模式寄存器 (手動/自動)
+ * 4. 根據模式執行對應的控制邏輯:
+ *    - 手動模式: 僅監控,操作員通過 HMI 控制
+ *    - 自動模式: PID 控制 + 自適應參數 + 泵浦協調
+ * 5. 執行泵浦輪換邏輯 (24小時週期)
+ *
+ * @param ptr 控制邏輯結構指標 (本函數未使用)
+ * @return 0=成功, -1=感測器讀取失敗, 其他=控制執行失敗
+ */
+// int control_logic_temperature_1_1(ControlLogic *ptr) {
+int control_logic_ls300d_1_temperature_control(ControlLogic *ptr) {
+    (void)ptr;
+
+    sensor_data_t sensor_data;
+    // safety_status_t safety_status;  // 暫時未使用，等待安全檢查功能啟用
+    int control_mode;
+    int ret = 0;
+
+    // 【露點計算】無論控制邏輯是否啟用，每個週期都執行露點計算
+    // 從環境溫度（42021）和濕度（42022）計算露點，
+    // 經由校正值（45004）調整後寫入露點暫存器（42024）
+    read_and_calculate_dew_point();
+
+    // 【自動啟停】檢測 AUTO_START_STOP 從 0 變為 1，自動啟用控制邏輯並切換到自動模式
+    // 當 REG_AUTO_START_STOP (45020) 觸發時，自動設定：
+    // - REG_CONTROL_LOGIC_1_ENABLE (41001) = 1
+    // - REG_TEMP_CONTROL_MODE (45009) = 1
+    handle_auto_start_stop();
+
+    // 【PID參數管理】每個週期載入寄存器參數並檢查恢復請求
+    load_pid_parameters_from_registers();
+    restore_default_pid_parameters();
+
+    // 【步驟0】檢測 enable 從 1 變為 0，觸發切換到手動模式
+    uint16_t current_enable = modbus_read_input_register(REG_CONTROL_LOGIC_1_ENABLE);
+
+    if (previous_enable_status == 1 && current_enable == 0) {
+        // enable 從啟用變為停用，執行切換到手動模式
+        switch_to_manual_mode_with_last_speed();
+    }
+
+    // 更新前次狀態
+    previous_enable_status = current_enable;
+
+    // 【步驟1】檢查控制邏輯1是否啟用 (通過 Modbus 寄存器 41001)
+    if (current_enable != 1) {
+        return 0;  // 未啟用則直接返回,不執行控制
+    }
+
+    info(debug_tag, "=== CDU溫度控制系統執行 (LS300D 雙備援版本) ===");
+
+    // 【步驟2】讀取感測器數據
+    // 包括 T1-T4 雙備援溫度感測器, F2(流量)
+    if (read_sensor_data(&sensor_data) != 0) {
+        error(debug_tag, "讀取感測器數據失敗或雙備援失效");
+        return -1;
+    }
+
+    // T4 = 進水溫度, T2 = 出水溫度 (主要控制目標)
+    debug(debug_tag, "溫度數據 - T4進水: %.1f°C, T2出水: %.1f°C, 流量: %.1f L/min",
+          sensor_data.t4.average, sensor_data.t2.average, sensor_data.flow_rate);
+
+    // 【步驟3】安全檢查 (暫時註釋,可根據需求啟用)
+    // 檢查項目: 溫度超限/流量過低/進出水溫差異常
+    // safety_status = perform_safety_checks(&sensor_data);
+
+    // if (safety_status == SAFETY_STATUS_EMERGENCY) {
+    //     error(debug_tag, "緊急狀況發生，執行緊急停機");
+    //     emergency_shutdown();
+    //     return -2;
+    // } else if (safety_status == SAFETY_STATUS_WARNING) {
+    //     warn(debug_tag, "系統警告狀態，繼續監控");
+    // }
+
+    // 【步驟4】讀取控制模式 (0=手動, 1=自動)
+    control_mode = modbus_read_input_register(REG_TEMP_CONTROL_MODE);
+    if (control_mode < 0) {
+        error(debug_tag, "讀取控制模式失敗");
+        control_mode = TEMP_CONTROL_MODE_MANUAL; // 預設手動模式
+    }
+
+    // 【步驟5】根據控制模式執行相應邏輯
+    if (control_mode == TEMP_CONTROL_MODE_AUTO) {
+        // 在自動模式中,處理比例閥手動模式切換
+        // 當 REG_AUTO_START_STOP = 1 且 REG_TEMP_CONTROL_MODE = 1 時:
+        // - REG_VALVE_MANUAL_MODE 0→1: 允許 HMI 手動設定比例閥開度
+        // - REG_VALVE_MANUAL_MODE 1→0: 恢復 PID 自動控制
+        handle_valve_manual_mode_switch();
+
+        // 自動模式: PID 控制 + 自適應參數調整 + 泵浦協調
+        info(debug_tag, "執行自動溫度控制模式");
+        ret = execute_automatic_control_mode(&sensor_data);
+    } else {
+        // 手動模式: 僅監控狀態,由操作員手動控制
+        info(debug_tag, "手動溫度控制模式 - 僅監控狀態");
+        ret = execute_manual_control_mode();
+    }
+
+    if (ret != 0) {
+        error(debug_tag, "控制邏輯執行失敗: %d", ret);
+    }
+
+    debug(debug_tag, "=== CDU溫度控制循環完成 ===");
+    return ret;
+}
+
+/**
+ * @brief 讀取雙備援溫度感測器
+ *
+ * 【功能說明】
+ * 讀取 A/B 兩個備援感測器的值,並實現容錯機制:
+ * - 雙備援正常: 使用平均值 (Ta + Tb) / 2
+ * - 單一失效: 使用正常感測器值 + 發出警報
+ * - 雙備援失效: 錯誤狀態
+ * - 差異檢測: |Ta - Tb| > 2.0°C 時發出警告
+ *
+ * @param reg_a A 感測器寄存器地址
+ * @param reg_b B 感測器寄存器地址
+ * @param name 感測器名稱 (用於日誌)
+ * @return 雙備援溫度感測器資料結構
+ */
+static redundant_temp_sensor_t read_redundant_temp_sensor(uint32_t reg_a, uint32_t reg_b, const char *name) {
+    redundant_temp_sensor_t sensor = {0};
+    int raw_a, raw_b;
+    const float TEMP_DIFF_THRESHOLD = 2.0f;  // 2.0°C 差異閾值
+
+    // 讀取 A 感測器
+    raw_a = modbus_read_input_register(reg_a);
+    if (raw_a >= 0 && raw_a != 0xFFFF) {
+        sensor.value_a = raw_a / 10.0f;
+        sensor.a_valid = true;
+    } else {
+        sensor.value_a = 0.0f;
+        sensor.a_valid = false;
+        warn(debug_tag, "%sA 感測器讀取失敗 (reg=%u)", name, reg_a);
+    }
+
+    // 讀取 B 感測器
+    raw_b = modbus_read_input_register(reg_b);
+    if (raw_b >= 0 && raw_b != 0xFFFF) {
+        sensor.value_b = raw_b / 10.0f;
+        sensor.b_valid = true;
+    } else {
+        sensor.value_b = 0.0f;
+        sensor.b_valid = false;
+        warn(debug_tag, "%sB 感測器讀取失敗 (reg=%u)", name, reg_b);
+    }
+
+    // 判斷感測器狀態並計算平均值
+    if (sensor.a_valid && sensor.b_valid) {
+        // 雙備援正常運行
+        sensor.average = (sensor.value_a + sensor.value_b) / 2.0f;
+        sensor.status = SENSOR_STATUS_OK;
+
+        // 檢測差異是否過大
+        float diff = fabsf(sensor.value_a - sensor.value_b);
+        if (diff > TEMP_DIFF_THRESHOLD) {
+            sensor.diff_warning = true;
+            warn(debug_tag, "%s 感測器差異過大: %.1f°C (A=%.1f°C, B=%.1f°C)",
+                 name, diff, sensor.value_a, sensor.value_b);
+        } else {
+            sensor.diff_warning = false;
+        }
+    } else if (sensor.a_valid || sensor.b_valid) {
+        // 單一失效,降級運行
+        sensor.average = sensor.a_valid ? sensor.value_a : sensor.value_b;
+        sensor.status = SENSOR_STATUS_DEGRADED;
+        sensor.diff_warning = false;
+        warn(debug_tag, "%s 降級運行: 使用 %s 感測器 (%.1f°C)",
+             name, sensor.a_valid ? "A" : "B", sensor.average);
+    } else {
+        // 雙備援全部失效
+        sensor.average = 0.0f;
+        sensor.status = SENSOR_STATUS_FAILED;
+        sensor.diff_warning = false;
+        error(debug_tag, "%s 雙備援全部失效!", name);
+    }
+
+    return sensor;
+}
+
+/**
+ * 讀取所有感測器數據 (LS300D 雙備援版本)
+ *
+ * 【功能說明】
+ * 從 Modbus 寄存器讀取雙備援溫度感測器、流量等數據。
+ *
+ * 【讀取內容】
+ * - T1a/T1b: 溫度感測器1 (雙備援, 0.1°C 精度)
+ * - T2a/T2b: 溫度感測器2 (雙備援, 0.1°C 精度)
+ * - T3a/T3b: 溫度感測器3 (雙備援, 0.1°C 精度)
+ * - T4a/T4b: 溫度感測器4 (雙備援, 0.1°C 精度)
+ * - F2: 流量回饋 (0.1 L/min 精度)
+ *
+ * @param data 感測器數據結構指標
+ * @return 0=成功, -1=參數錯誤或感測器失效
+ */
+static int read_sensor_data(sensor_data_t *data) {
+    if (data == NULL) {
+        error(debug_tag, "read_sensor_data: NULL 指標錯誤");
+        return -1;
+    }
+
+    // 讀取雙備援溫度感測器
+    data->t1 = read_redundant_temp_sensor(REG_T1A_TEMP, REG_T1B_TEMP, "T1");
+    data->t2 = read_redundant_temp_sensor(REG_T2A_TEMP, REG_T2B_TEMP, "T2");
+    data->t3 = read_redundant_temp_sensor(REG_T3A_TEMP, REG_T3B_TEMP, "T3");
+    data->t4 = read_redundant_temp_sensor(REG_T4A_TEMP, REG_T4B_TEMP, "T4");
+
+    // 檢查是否有感測器完全失效
+    if (data->t1.status == SENSOR_STATUS_FAILED ||
+        data->t2.status == SENSOR_STATUS_FAILED ||
+        data->t3.status == SENSOR_STATUS_FAILED ||
+        data->t4.status == SENSOR_STATUS_FAILED) {
+        error(debug_tag, "溫度感測器嚴重失效,停止自動控制");
+        return -1;
+    }
+
+    // 讀取流量數據 (0.1 L/min精度)
+    int flow_raw = modbus_read_input_register(REG_F2_FLOW);
+    if (flow_raw >= 0 && flow_raw != 0xFFFF) {
+        data->flow_rate = flow_raw / 10.0f;
+    } else {
+        warn(debug_tag, "F2 流量讀取失敗");
+        data->flow_rate = 0.0f;
+    }
+
+    // 設定時間戳
+    data->timestamp = time(NULL);
+
+    debug(debug_tag, "感測器讀取完成 - T1: %.1f°C, T2: %.1f°C, T3: %.1f°C, T4: %.1f°C, F2: %.1f L/min",
+          data->t1.average, data->t2.average, data->t3.average, data->t4.average, data->flow_rate);
+
+    return 0;
+}
+
+/**
+ * 安全檢查邏輯 (LS300D 雙備援版本，使用 HMI 可設定的溫度限制)
+ */
+static safety_status_t perform_safety_checks(const sensor_data_t *data) {
+    // 從寄存器讀取溫度限制值 (HMI 可設定)
+    uint16_t t_high_alarm = modbus_read_input_register(REG_T_HIGH_ALARM);
+    uint16_t t_low_alarm = modbus_read_input_register(REG_T_LOW_ALARM);
+
+    // 緊急停機檢查 - 最高溫度 (使用 T2 出水溫度)
+    if (data->t2.average > (float)t_high_alarm) {
+        error(debug_tag, "T2出水溫度過高: %.1f°C > %d°C", data->t2.average, t_high_alarm);
+        return SAFETY_STATUS_EMERGENCY;
+    }
+
+    // 緊急停機檢查 - 最低溫度 (使用 T2 出水溫度)
+    if (data->t2.average < (float)t_low_alarm) {
+        error(debug_tag, "T2出水溫度過低: %.1f°C < %d°C", data->t2.average, t_low_alarm);
+        return SAFETY_STATUS_EMERGENCY;
+    }
+
+    if (data->flow_rate < MIN_FLOW_RATE * 0.5f) {
+        error(debug_tag, "流量過低: %.1f L/min < %.1f L/min", data->flow_rate, MIN_FLOW_RATE * 0.5f);
+        return SAFETY_STATUS_EMERGENCY;
+    }
+
+    // 警告條件檢查
+    if (data->t2.average > TARGET_TEMP_DEFAULT + 5.0f) {
+        warn(debug_tag, "溫度偏高警告: %.1f°C", data->t2.average);
+        return SAFETY_STATUS_WARNING;
+    }
+
+    if (data->flow_rate < MIN_FLOW_RATE) {
+        warn(debug_tag, "流量偏低警告: %.1f L/min", data->flow_rate);
+        return SAFETY_STATUS_WARNING;
+    }
+
+    // 進出水溫差異常檢查 (T4 進水, T2 出水)
+    float temp_diff = fabs(data->t4.average - data->t2.average);
+    if (temp_diff > 10.0f) {
+        warn(debug_tag, "進出水溫差過大: %.1f°C (T4進水: %.1f°C, T2出水: %.1f°C)",
+             temp_diff, data->t4.average, data->t2.average);
+        return SAFETY_STATUS_WARNING;
+    }
+
+    return SAFETY_STATUS_SAFE;
+}
+
+/* 暫時註解，等待緊急停機功能啟用
+ * 緊急停機程序
+ */
+/*
+static void emergency_shutdown(void) {
+    error(debug_tag, "執行緊急停機程序...");
+
+    // 停止所有泵浦
+    // modbus_write_single_register(REG_PUMP1_CONTROL, 0);
+    // modbus_write_single_register(REG_PUMP2_CONTROL, 0);
+    // modbus_write_single_register(REG_PUMP3_CONTROL, 0);
+
+    // 關閉比例閥
+    // modbus_write_single_register(REG_VALVE_OPENING, 0);
+
+    // 重置PID控制器
+    reset_pid_controller(&temperature_pid);
+
+    error(debug_tag, "緊急停機完成");
+}
+*/
+
+/**
+ * PID控制器計算
+ */
+
+ static float calculate_pid_output(pid_controller_t *pid, float setpoint, float current_value) {
+    time_t current_time = time(NULL);
+    float delta_time = (current_time > pid->previous_time) ? (current_time - pid->previous_time) : 1.0f;
+    
+    // 計算控制誤差
+    float error = current_value - setpoint;
+   
+    // 比例項
+    float proportional = pid->kp * error;
+    
+    // 積分項 - 防止積分飽和
+    pid->integral += error * delta_time;
+    if (pid->integral > pid->output_max / pid->ki) {
+        pid->integral = pid->output_max / pid->ki;
+    } else if (pid->integral < pid->output_min / pid->ki) {
+        pid->integral = pid->output_min / pid->ki;
+    }
+    float integral_term = pid->ki * pid->integral;
+    
+    // 微分項
+    float derivative = (delta_time > 0) ? (error - pid->previous_error) / delta_time : 0.0f;
+    float derivative_term = pid->kd * derivative;
+    
+    // PID輸出計算
+    float output = proportional + integral_term + derivative_term;
+    
+    // 輸出限制
+    if (output > pid->output_max) output = pid->output_max;
+    if (output < pid->output_min) output = pid->output_min;
+    
+    // 更新狀態
+    pid->previous_error = error;
+    pid->previous_time = current_time;
+    
+    debug(debug_tag, "PID計算 - 誤差: %.2f, P: %.2f, I: %.2f, D: %.2f, 輸出: %.2f", 
+          error, proportional, integral_term, derivative_term, output);
+    
+    return output;
+}
+
+/* 暫時註解，等待緊急停機功能啟用
+ * 重置PID控制器
+ */
+/*
+static void reset_pid_controller(pid_controller_t *pid) {
+    pid->integral = 0.0f;
+    pid->previous_error = 0.0f;
+    pid->previous_time = time(NULL);
+    debug(debug_tag, "PID控制器已重置");
+}
+*/
+
+/**
+ * 自適應PID參數調整
+ */
+static void adjust_pid_parameters(pid_controller_t *pid, float error) {
+    float abs_error = fabs(error);
+    
+    if (abs_error > 2.0f) {
+        // 大誤差：增加比例增益，減少積分增益
+        pid->kp = fminf(pid->kp * 1.1f, 25.0f);
+        pid->ki = fmaxf(pid->ki * 0.9f, 0.3f);
+        debug(debug_tag, "PID參數調整 - 大誤差模式 Kp: %.2f, Ki: %.2f", pid->kp, pid->ki);
+    } else if (abs_error < 0.2f) {
+        // 小誤差：減少比例增益，增加積分增益
+        pid->kp = fmaxf(pid->kp * 0.95f, 8.0f);
+        pid->ki = fminf(pid->ki * 1.05f, 1.5f);
+        debug(debug_tag, "PID參數調整 - 小誤差模式 Kp: %.2f, Ki: %.2f", pid->kp, pid->ki);
+    }
+}
+
+/**
+ * 手動控制模式
+ *
+ * 手動模式下，目標溫度由 HMI 操作員透過寄存器設定，
+ * 控制邏輯僅讀取當前設定值用於監控和日誌記錄，
+ * 不會覆寫寄存器中的目標溫度值。
+ */
+static int execute_manual_control_mode(void) {
+    // 從寄存器讀取 HMI 設定的目標溫度
+    int target_temp_raw = modbus_read_input_register(REG_TARGET_TEMP);
+    float target_temp = target_temp_raw / 10.0f;
+
+    info(debug_tag, "手動控制模式 - 當前目標溫度: %.1f°C (HMI 設定)", target_temp);
+
+    // 確保比例閥手動模式已啟用
+    modbus_write_single_register(REG_VALVE_MANUAL_MODE, 1);
+
+    // 手動模式下僅監控，不自動調整設備
+    debug(debug_tag, "手動模式設定完成，系統處於監控狀態");
+
+    return 0;
+}
+
+/**
+ * 自動控制模式
+ */
+static int execute_automatic_control_mode(const sensor_data_t *data) {
+    float target_temp;
+    float pid_output;
+    control_output_t control_output = {0};
+    int target_temp_raw;
+    
+    // info(debug_tag, "自動控制模式執行");
+    
+    // 設定自動模式
+    modbus_write_single_register(REG_TEMP_CONTROL_MODE, 1);
+    // 注意: REG_VALVE_MANUAL_MODE 由使用者控制,不在此處自動設定為 0
+    
+    // 讀取目標溫度
+    target_temp_raw = modbus_read_input_register(REG_TARGET_TEMP);
+    if (target_temp_raw >= 0) {
+        target_temp = target_temp_raw / 10.0f;
+    } else {
+        target_temp = TARGET_TEMP_DEFAULT;
+        warn(debug_tag, "讀取目標溫度失敗，使用預設值: %.1f°C", target_temp);
+    }
+
+    // 套用溫度跟隨露點功能（在 PID 計算前調整目標溫度）
+    apply_dew_point_tracking(&target_temp);
+
+    // PID控制計算 (使用 T2 出水溫度作為控制目標)
+    pid_output = calculate_pid_output(&temperature_pid, target_temp, data->t2.average);
+
+    // 自適應參數調整
+    adjust_pid_parameters(&temperature_pid, target_temp - data->t2.average);
+
+    // 計算比例閥開度
+    control_output.valve_opening = calculate_valve_opening(pid_output, data);
+
+    // 讀取比例閥手動模式狀態
+    uint16_t valve_manual_mode = modbus_read_input_register(REG_VALVE_MANUAL_MODE);
+
+    // 設定比例閥開度 (僅在非手動模式時寫入 PID 計算結果)
+    int valve_value = (int)(control_output.valve_opening);
+    if (valve_value > 100) valve_value = 100;
+    if (valve_value < 0) valve_value = 0;
+
+    if (valve_manual_mode == 0) {
+        // 自動模式: 使用 PID 計算結果設定比例閥開度
+        modbus_write_single_register(REG_VALVE_OPENING, valve_value);
+        info(debug_tag, "自動控制 - PID輸出: %.1f%%, T2出水溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度: %d%%",
+             pid_output, data->t2.average, target_temp, valve_value);
+    } else {
+        // 手動模式: 不寫入 PID 計算結果,保持 HMI 手動設定值
+        uint16_t current_opening = modbus_read_input_register(REG_VALVE_OPENING);
+        info(debug_tag, "自動控制(比例閥手動) - PID輸出: %.1f%%, T2出水溫度: %.1f°C, 目標溫度: %.1f°C, 比例閥開度(手動): %d%%",
+             pid_output, data->t2.average, target_temp, current_opening);
+    }
+    
+    return 0;
+}
+
+
+
+/**
+ * 計算比例閥開度
+ */
+static float calculate_valve_opening(float pid_output, const sensor_data_t *data) {
+    float valve_opening = pid_output;
+
+    // // 流量補償
+    // if (data->flow_rate < MIN_FLOW_RATE) {
+    //     valve_opening = fminf(valve_opening + 10.0f, 100.0f);
+    // } else if (data->flow_rate > MIN_FLOW_RATE * 1.5f) {
+    //     valve_opening = fmaxf(valve_opening - 5.0f, 10.0f);
+    // }
+
+    // 溫度快速響應 (使用 T2 出水溫度)
+    float temp_error = fabs(data->t2.average - TARGET_TEMP_DEFAULT);
+    if (temp_error > 2.0f) {
+        valve_opening = fminf(valve_opening * 1.2f, 100.0f);
+    }
+
+    return valve_opening;
+}
+
+/**
+ * 計算露點溫度（使用 Magnus-Tetens 公式）
+ *
+ * @param temperature 環境溫度（°C）
+ * @param humidity 相對濕度（%RH，0-100）
+ * @param correction 露點校正值（°C）
+ * @return 露點溫度（°C）
+ *
+ * Magnus-Tetens 公式：
+ * α(T,RH) = ln(RH/100) + (b×T)/(c+T)
+ * Td = (c×α)/(b-α) + correction
+ * 其中 b ≈ 17.27，c ≈ 237.7°C
+ *
+ * 適用範圍：-40°C 至 +50°C，1% 至 100% RH
+ */
+static float calculate_dew_point(float temperature, float humidity, float correction) {
+    // Magnus-Tetens 公式常數
+    const float b = 17.27f;
+    const float c = 237.7f;
+
+    // 檢查輸入有效性
+    if (humidity <= 0.0f || humidity > 100.0f) {
+        warn(debug_tag, "濕度值超出範圍: %.1f%% (有效範圍: 0-100%%)", humidity);
+        return 0.0f;  // 回傳無效值
+    }
+
+    if (temperature < -40.0f || temperature > 50.0f) {
+        warn(debug_tag, "溫度值超出範圍: %.1f°C (建議範圍: -40~50°C)", temperature);
+        // 仍然繼續計算，但記錄警告
+    }
+
+    // 計算 α = ln(RH/100) + (b×T)/(c+T)
+    float rh_ratio = humidity / 100.0f;
+    float alpha = logf(rh_ratio) + (b * temperature) / (c + temperature);
+
+    // 計算露點 Td = (c×α)/(b-α)
+    float dew_point = (c * alpha) / (b - alpha);
+
+    // 套用校正值
+    dew_point += correction;
+
+    debug(debug_tag, "露點計算: T=%.1f°C, RH=%.1f%%, 校正=%.1f°C => Td=%.1f°C",
+          temperature, humidity, correction, dew_point);
+
+    return dew_point;
+}
+
+/**
+ * 讀取環境溫濕度並計算露點溫度
+ *
+ * 此函式從 Modbus 暫存器讀取：
+ * - 環境溫度（REG_ENV_TEMP, 42021）
+ * - 環境濕度（REG_HUMIDITY, 42022）
+ * - 露點校正值（REG_DP_CORRECT, 45004）
+ *
+ * 計算露點後寫入：
+ * - 露點溫度（REG_DEW_POINT, 42024）
+ *
+ * 無論控制邏輯是否啟用，每個週期都會執行此函式
+ */
+static void read_and_calculate_dew_point(void) {
+    // 讀取環境溫度（精度 0.1°C，儲存為 uint16_t）
+    uint16_t temp_raw = modbus_read_input_register(REG_ENV_TEMP);
+    if (temp_raw == 0xFFFF) {
+        warn(debug_tag, "環境溫度讀取失敗 (address: %u)", REG_ENV_TEMP);
+        return;  // 讀取失敗，跳過計算
+    }
+    float temperature = (int16_t)temp_raw / 10.0f;  // 轉換為實際溫度（支援負溫度）
+
+    // 讀取環境濕度（精度 0.1%，儲存為 uint16_t）
+    uint16_t humidity_raw = modbus_read_input_register(REG_HUMIDITY);
+    if (humidity_raw == 0xFFFF) {
+        warn(debug_tag, "環境濕度讀取失敗 (address: %u)", REG_HUMIDITY);
+        return;  // 讀取失敗，跳過計算
+    }
+    float humidity = humidity_raw / 10.0f;  // 轉換為實際濕度百分比
+
+    // 讀取露點校正值（精度 0.1°C，儲存為 uint16_t）
+    uint16_t correction_raw = modbus_read_input_register(REG_DP_CORRECT);
+    float correction = 0.0f;
+    if (correction_raw == 0xFFFF) {
+        // 校正值讀取失敗，使用預設值 0（不校正）
+        debug(debug_tag, "露點校正值讀取失敗，使用預設值 0°C");
+        correction = 0.0f;
+    } else {
+        correction = (int16_t)correction_raw / 10.0f;  // 轉換為實際校正值（支援負值）
+    }
+
+    // 計算露點溫度
+    float dew_point = calculate_dew_point(temperature, humidity, correction);
+
+    // 檢查計算結果是否合理
+    if (dew_point < -50.0f || dew_point > 60.0f) {
+        warn(debug_tag, "露點計算結果異常: %.1f°C (輸入: T=%.1f°C, RH=%.1f%%)",
+             dew_point, temperature, humidity);
+        // 仍然寫入結果，但記錄警告
+    }
+
+    // 將露點溫度轉換為 uint16_t 並寫入暫存器（精度 0.1°C）
+    int16_t dew_point_raw = (int16_t)(dew_point * 10.0f);
+    bool write_success = modbus_write_single_register(REG_DEW_POINT, (uint16_t)dew_point_raw);
+
+    if (!write_success) {
+        warn(debug_tag, "露點溫度寫入失敗 (address: %u, value: %.1f°C)",
+             REG_DEW_POINT, dew_point);
+    } else {
+        debug(debug_tag, "露點溫度已更新: %.1f°C (T=%.1f°C, RH=%.1f%%, 校正=%.1f°C)",
+              dew_point, temperature, humidity, correction);
+    }
+}
+
+/**
+ * 套用溫度跟隨露點功能
+ *
+ * 此函式根據跟隨模式開關（REG_TEMP_FOLLOW_DEW_POINT, 45010）決定如何處理目標溫度：
+ * - 模式 1（跟隨模式）：將露點溫度直接設為目標溫度，避免結露
+ * - 模式 0（保護模式）：僅當目標溫度低於露點時，將其調整為露點溫度
+ *
+ * @param target_temp 指向目標溫度變數的指標，此函式會修改其值
+ *
+ * 在自動控制模式下，於讀取目標溫度後、PID 計算前呼叫此函式
+ */
+static void apply_dew_point_tracking(float *target_temp) {
+    // 讀取溫度跟隨露點模式開關 (45010)
+    uint16_t follow_mode = modbus_read_input_register(REG_TEMP_FOLLOW_DEW_POINT);
+
+    // 讀取當前露點溫度 (42024)
+    uint16_t dew_point_raw = modbus_read_input_register(REG_DEW_POINT);
+
+    // 檢查露點溫度讀取是否成功
+    if (dew_point_raw == 0xFFFF) {
+        debug(debug_tag, "露點溫度讀取失敗，跳過溫度跟隨露點功能");
+        return;  // 讀取失敗，不執行跟隨功能
+    }
+
+    // 轉換露點溫度（支援負溫度）
+    float dew_point = (int16_t)dew_point_raw / 10.0f;
+
+    if (follow_mode == 1) {
+        // ===== 模式 1：跟隨模式 =====
+        // 直接使用露點溫度作為目標溫度
+        float original_target = *target_temp;
+        *target_temp = dew_point;
+
+        // 將調整後的目標溫度寫回暫存器 (45001) 供 HMI 顯示
+        int16_t target_temp_raw_write = (int16_t)(*target_temp * 10.0f);
+        modbus_write_single_register(REG_TARGET_TEMP, (uint16_t)target_temp_raw_write);
+
+        info(debug_tag, "【跟隨模式】目標溫度已設為露點: %.1f°C → %.1f°C",
+             original_target, *target_temp);
+
+    } else if (follow_mode == 0) {
+        // ===== 模式 0：保護模式 =====
+        // 確保目標溫度不低於露點溫度（防止結露）
+        if (*target_temp < dew_point) {
+            float original_target = *target_temp;
+            *target_temp = dew_point;
+
+            // 將調整後的目標溫度寫回暫存器 (45001)
+            int16_t target_temp_raw_write = (int16_t)(*target_temp * 10.0f);
+            modbus_write_single_register(REG_TARGET_TEMP, (uint16_t)target_temp_raw_write);
+
+            warn(debug_tag, "【保護模式】目標溫度 %.1f°C 低於露點 %.1f°C，已調整為露點溫度",
+                 original_target, dew_point);
+        } else {
+            // 目標溫度高於露點，無需調整
+            debug(debug_tag, "【保護模式】目標溫度 %.1f°C 高於露點 %.1f°C，無需調整",
+                  *target_temp, dew_point);
+        }
+    } else {
+        // 未知模式值，記錄警告
+        warn(debug_tag, "溫度跟隨露點模式開關值異常: %u（有效值：0=保護, 1=跟隨）", follow_mode);
+    }
+}
+
+/**
+ * 處理自動啟停功能
+ *
+ * 此函式檢測 REG_AUTO_START_STOP (45020) 的邊緣觸發變化，執行不同的模式切換：
+ *
+ * 【0→1 邊緣觸發】自動啟動模式
+ * 1. 將 REG_CONTROL_LOGIC_1_ENABLE (41001) 設定為 1（啟用控制邏輯）
+ * 2. 將 REG_TEMP_CONTROL_MODE (45009) 設定為 1（切換到自動模式）
+ * 3. 將 REG_VALVE_MANUAL_MODE (45061) 設定為 0（比例閥切換到自動模式）
+ *
+ * 【1→0 邊緣觸發】切換到手動模式（保持啟用）
+ * 1. 不修改 REG_CONTROL_LOGIC_1_ENABLE（保持控制邏輯啟用狀態）
+ * 2. 將 REG_TEMP_CONTROL_MODE (45009) 設定為 0（切換到手動模式）
+ *
+ * 設計採用邊緣觸發，避免每個週期重複寫入暫存器。
+ * 在主控制迴圈中，於露點計算後、enable 檢查前呼叫。
+ */
+static void handle_auto_start_stop(void) {
+    // 讀取自動啟停開關 (45020)
+    uint16_t current_auto_start = modbus_read_input_register(REG_AUTO_START_STOP);
+
+    // 檢查讀取是否成功
+    if (current_auto_start == 0xFFFF) {
+        warn(debug_tag, "REG_AUTO_START_STOP 讀取失敗，跳過自動啟停檢查");
+        return;  // 讀取失敗，跳過處理
+    }
+
+    // 邊緣觸發檢測：從 0 變為 1 時執行自動啟動
+    if (previous_auto_start_stop == 0 && current_auto_start == 1) {
+        info(debug_tag, "【自動啟停】觸發 - 啟用控制邏輯並切換到自動模式");
+
+        // 1. 啟用控制邏輯 (設定 ENABLE = 1)
+        bool enable_success = modbus_write_single_register(REG_CONTROL_LOGIC_1_ENABLE, 1);
+        if (!enable_success) {
+            error(debug_tag, "【自動啟停】啟用控制邏輯失敗 (ENABLE 寫入失敗)");
+        }
+
+        // 2. 設定為自動模式 (設定 MODE = 1)
+        bool mode_success = modbus_write_single_register(REG_TEMP_CONTROL_MODE, 1);
+        if (!mode_success) {
+            error(debug_tag, "【自動啟停】切換自動模式失敗 (MODE 寫入失敗)");
+        }
+
+        // 3. 設定比例閥為自動模式 (設定 VALVE_MANUAL_MODE = 0)
+        bool valve_auto_success = modbus_write_single_register(REG_VALVE_MANUAL_MODE, 0);
+        if (!valve_auto_success) {
+            error(debug_tag, "【自動啟停】切換比例閥自動模式失敗 (VALVE_MANUAL_MODE 寫入失敗)");
+        }
+
+        // 記錄執行結果
+        if (enable_success && mode_success && valve_auto_success) {
+            info(debug_tag, "【自動啟停】執行成功 - ENABLE=1, MODE=AUTO, VALVE_MANUAL=0");
+        } else {
+            error(debug_tag, "【自動啟停】執行部分失敗 - ENABLE=%s, MODE=%s, VALVE_MANUAL=%s",
+                  enable_success ? "成功" : "失敗",
+                  mode_success ? "成功" : "失敗",
+                  valve_auto_success ? "成功" : "失敗");
+        }
+    }
+    // 【需求B】邊緣觸發檢測：從 1 變為 0 - 保持啟用但切換到手動模式
+    else if (previous_auto_start_stop == 1 && current_auto_start == 0) {
+        info(debug_tag, "【自動啟停】關閉 (1→0) - 保持啟用狀態，切換到手動模式");
+
+        // 1. 不修改 REG_CONTROL_LOGIC_1_ENABLE，保持控制邏輯啟用狀態
+        // 2. 切換到手動模式 (設定 MODE = 0)
+        bool mode_success = modbus_write_single_register(REG_TEMP_CONTROL_MODE, 0);
+
+        if (mode_success) {
+            info(debug_tag, "【自動啟停】已切換到手動模式 - ENABLE 保持不變, MODE=MANUAL");
+        } else {
+            error(debug_tag, "【自動啟停】切換手動模式失敗 (MODE 寫入失敗)");
+        }
+    }
+
+    // 更新前次狀態
+    previous_auto_start_stop = current_auto_start;
+}
+
+/**
+ * handle_valve_manual_mode_switch() - 處理比例閥手動模式切換
+ *
+ * 此函數監控 REG_VALVE_MANUAL_MODE (45061) 的邊緣觸發變化,
+ * 實作以下功能:
+ *
+ * 1. 【0→1】切換到手動模式:
+ *    - 記錄切換事件
+ *    - 後續在自動控制模式中,PID 計算結果將不會寫入 REG_VALVE_OPENING
+ *    - HMI 可透過 REG_VALVE_OPENING (411151) 手動設定比例閥開度
+ *
+ * 2. 【1→0】切換到自動模式:
+ *    - 記錄切換事件
+ *    - 恢復 PID 自動控制,允許寫入 REG_VALVE_OPENING
+ *
+ * 條件限制:
+ * - 只在 REG_AUTO_START_STOP = 1 且 REG_TEMP_CONTROL_MODE = 1 時生效
+ *
+ * 設計採用邊緣觸發,避免每個週期重複記錄。
+ */
+static void handle_valve_manual_mode_switch(void) {
+    // 讀取比例閥手動模式開關 (45061)
+    uint16_t current_valve_manual = modbus_read_input_register(REG_VALVE_MANUAL_MODE);
+
+    // 檢查讀取是否成功
+    if (current_valve_manual == 0xFFFF) {
+        warn(debug_tag, "REG_VALVE_MANUAL_MODE 讀取失敗,跳過手動模式檢查");
+        return;  // 讀取失敗,跳過處理
+    }
+
+    // 邊緣觸發檢測:從 0 變為 1 - 切換到手動模式
+    if (previous_valve_manual_mode == 0 && current_valve_manual == 1) {
+        info(debug_tag, "【比例閥手動模式】切換到手動控制 (0→1)");
+        info(debug_tag, "【比例閥手動模式】HMI 可透過 REG_VALVE_OPENING (411151) 手動設定開度");
+    }
+    // 邊緣觸發檢測:從 1 變為 0 - 切換到自動模式
+    else if (previous_valve_manual_mode == 1 && current_valve_manual == 0) {
+        info(debug_tag, "【比例閥手動模式】切換到自動控制 (1→0)");
+        info(debug_tag, "【比例閥手動模式】恢復 PID 自動控制比例閥開度");
+    }
+
+    // 更新前次狀態
+    previous_valve_manual_mode = current_valve_manual;
+}
+
+/**
+ * 從寄存器載入 PID 參數並更新控制器
+ *
+ * 功能:
+ * - 每個控制週期從 Modbus 寄存器讀取 PID 參數 (Kp, Ki, Kd)
+ * - 寄存器精度 ×100 (例如 1500 → 15.0)
+ * - 參數合理性檢查: Kp: 1.0-50.0, Ki: 0.1-5.0, Kd: 0.0-10.0
+ * - 只在參數變化時更新並記錄 (避免過多日誌)
+ *
+ * 寄存器定義:
+ * - REG_PID_TEMP_KP (45501): 溫度控制 Kp
+ * - REG_PID_TEMP_KI (45502): 溫度控制 Ki
+ * - REG_PID_TEMP_KD (45503): 溫度控制 Kd
+ */
+static void load_pid_parameters_from_registers(void) {
+    // 讀取 PID 參數寄存器 (精度 ×100)
+    uint16_t kp_reg = modbus_read_input_register(REG_PID_TEMP_KP);
+    uint16_t ki_reg = modbus_read_input_register(REG_PID_TEMP_KI);
+    uint16_t kd_reg = modbus_read_input_register(REG_PID_TEMP_KD);
+
+    // 檢查寄存器是否有效 (非讀取失敗)
+    if (kp_reg == 0xFFFF || ki_reg == 0xFFFF || kd_reg == 0xFFFF) {
+        // 寄存器讀取失敗,保持當前參數
+        return;
+    }
+
+    // 轉換為實際值 (除以 100.0)
+    float kp = (float)kp_reg / 100.0f;
+    float ki = (float)ki_reg / 100.0f;
+    float kd = (float)kd_reg / 100.0f;
+
+    // 參數合理性檢查 (Kp: 1.0-50.0, Ki: 0.1-5.0, Kd: 0.0-10.0)
+    if (kp < 1.0f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過小,限制為 1.0", kp);
+        kp = 1.0f;
+    } else if (kp > 50.0f) {
+        info(debug_tag, "【PID參數】Kp=%.2f 過大,限制為 50.0", kp);
+        kp = 50.0f;
+    }
+
+    if (ki < 0.1f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過小,限制為 0.1", ki);
+        ki = 0.1f;
+    } else if (ki > 5.0f) {
+        info(debug_tag, "【PID參數】Ki=%.2f 過大,限制為 5.0", ki);
+        ki = 5.0f;
+    }
+
+    if (kd < 0.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 為負值,限制為 0.0", kd);
+        kd = 0.0f;
+    } else if (kd > 10.0f) {
+        info(debug_tag, "【PID參數】Kd=%.2f 過大,限制為 10.0", kd);
+        kd = 10.0f;
+    }
+
+    // 檢查參數是否有變化 (容許 0.01 誤差)
+    bool changed = false;
+    if (fabsf(temperature_pid.kp - kp) > 0.01f ||
+        fabsf(temperature_pid.ki - ki) > 0.01f ||
+        fabsf(temperature_pid.kd - kd) > 0.01f) {
+        changed = true;
+    }
+
+    // 只在參數實際變更時更新並記錄
+    if (changed) {
+        info(debug_tag, "【PID參數更新】Kp=%.2f→%.2f, Ki=%.2f→%.2f, Kd=%.2f→%.2f",
+             temperature_pid.kp, kp, temperature_pid.ki, ki, temperature_pid.kd, kd);
+
+        temperature_pid.kp = kp;
+        temperature_pid.ki = ki;
+        temperature_pid.kd = kd;
+    }
+}
+
+/**
+ * 恢復 PID 參數為出廠預設值
+ *
+ * 功能:
+ * - 使用邊緣觸發 (0→1) 檢測恢復請求
+ * - 將 PID 參數恢復為出廠預設值: Kp=15.0, Ki=0.8, Kd=2.5
+ * - 同時更新寄存器和 PID 控制器
+ * - 執行後自動清除觸發標誌
+ *
+ * 寄存器定義:
+ * - REG_RESTORE_DEFAULT_PID_TEMP (45900): 恢復觸發標誌 (寫入 1 觸發)
+ *
+ * 預設值:
+ * - Kp=15.0 (1500), Ki=0.8 (80), Kd=2.5 (250)
+ */
+static void restore_default_pid_parameters(void) {
+    static uint16_t previous_restore_flag = 0;
+
+    // 讀取恢復標誌
+    uint16_t current_restore_flag = modbus_read_input_register(REG_RESTORE_DEFAULT_PID_TEMP);
+
+    // 邊緣觸發檢測: 0→1
+    if (previous_restore_flag == 0 && current_restore_flag == 1) {
+        info(debug_tag, "【PID參數恢復】觸發恢復出廠預設值...");
+
+        // 寫入預設值到寄存器 (精度 ×100)
+        modbus_write_single_register(REG_PID_TEMP_KP, 1500);  // 15.0
+        modbus_write_single_register(REG_PID_TEMP_KI, 80);    // 0.8
+        modbus_write_single_register(REG_PID_TEMP_KD, 250);   // 2.5
+
+        // 直接更新 PID 控制器
+        temperature_pid.kp = 15.0f;
+        temperature_pid.ki = 0.8f;
+        temperature_pid.kd = 2.5f;
+
+        // 清除觸發標誌
+        modbus_write_single_register(REG_RESTORE_DEFAULT_PID_TEMP, 0);
+
+        info(debug_tag, "【PID參數恢復】已恢復為出廠預設值: Kp=15.0, Ki=0.8, Kd=2.5");
+    }
+
+    // 更新前次狀態
+    previous_restore_flag = current_restore_flag;
+}
+
+int control_logic_ls300d_1_config_get(uint32_t *list_size, control_logic_register_t **list, char **file_path)
+{
+    int ret = SUCCESS;
+
+    *list_size = sizeof(_control_logic_register_list) / sizeof(_control_logic_register_list[0]);
+    *list = (control_logic_register_t *)_control_logic_register_list;
+    *file_path = (char *)CONFIG_REGISTER_FILE_PATH;
+
+    return ret;
+}

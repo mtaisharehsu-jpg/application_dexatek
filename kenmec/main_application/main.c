@@ -1,16 +1,19 @@
 #include "dexatek/main_application/include/application_common.h"
 
+#include <string.h>
 #include "dexatek/main_application/main_application.h"
 #include "dexatek/main_application/include/utilities/platform_watchdog.h"
 #include "dexatek/main_application/managers/ethernet_manager/ethernet_manager.h"
 #include "dexatek/main_application/managers/modbus_manager/modbus_manager.h"
 #include "dexatek/main_application/managers/hid_manager/hid_manager.h"
+#include "dexatek/main_application/managers/usb_manager/usb_manager.h"
 #include "dexatek/main_application/services/include/sntp_service.h"
 
 #include "kenmec/main_application/kenmec_config.h"
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
 #include "kenmec/main_application/redfish/include/redfish_init.h"
+#include <sqlite3.h>
 
 /*---------------------------------------------------------------------------
                             Defined Constants
@@ -21,12 +24,15 @@ static const char* tag = "kenmec_main";
                                 Variables
  ---------------------------------------------------------------------------*/
 static bool _thread_aborted = false;
+static bool _disable_ethernet = false;
 
 /*---------------------------------------------------------------------------
                             Function Prototypes
  ---------------------------------------------------------------------------*/
 static void _handle_sigint(int signo);
 static void _main_exit(void);
+static void _parse_arguments(int argc, char **argv);
+static void _show_usage(const char *program_name);
 void application_run(void);
 int application_stop(void);
 
@@ -48,6 +54,34 @@ static void _handle_sigint(int signo)
     }
 }
 
+static void _show_usage(const char *program_name)
+{
+    printf("Usage: %s [options]\n", program_name);
+    printf("Options:\n");
+    printf("  noeth     Disable ethernet manager initialization\n");
+    printf("  --help    Show this help message\n");
+    printf("  -h        Show this help message\n");
+}
+
+static void _parse_arguments(int argc, char **argv)
+{
+    for (int i = 1; i < argc; i++) {
+        if (strcmp(argv[i], "noeth") == 0) {
+            _disable_ethernet = true;
+            debug(tag, "Ethernet manager initialization disabled");
+        }
+        else if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
+            _show_usage(argv[0]);
+            exit(0);
+        }
+        else {
+            printf("Unknown argument: %s\n", argv[i]);
+            _show_usage(argv[0]);
+            exit(1);
+        }
+    }
+}
+
 static void _main_application_process(void)
 {
     debug(tag, "Starting main application process...");
@@ -58,10 +92,20 @@ static void _main_application_process(void)
 #endif
 
     time_delay_ms(10000);
+    
+    usb_manager_init();
 
     // Initialize application components.   
-    ethernet_manager_init();
+    if (!_disable_ethernet) {
+        ethernet_manager_init();
+        debug(tag, "Ethernet manager initialized");
+    } else {
+        debug(tag, "Ethernet manager initialization skipped (noeth parameter)");
+    }
+    
     // sntp_service_init();
+
+    time_delay_ms(1000);
     
     hid_manager_init();
 
@@ -126,9 +170,12 @@ int application_stop(void)
     // Add cleanup code here
     debug(tag, "Application stopped");
 
-
     hid_manager_deinit();
     modbus_manager_deinit();
+    redfish_deinit();
+
+    // Optional: shutdown SQLite on app exit
+    sqlite3_shutdown();
 
     return 0;
 }
@@ -136,10 +183,10 @@ int application_stop(void)
 
 int main(int argc, char **argv)
 {
-    (void) argc;
-    (void) argv;
-
     int ret = EXIT_SUCCESS;
+
+    // Parse command line arguments
+    _parse_arguments(argc, argv);
 
     debug(tag, "Starting KENMEC application...");
 

@@ -5,6 +5,11 @@
 #include <stdbool.h>
 #define DK_MODBUS_DEVICE_ID 240
 
+// v021 新增: IOBoard 韌體版本暫存器位址
+#define DK_MODBUS_VERSION_MAJOR     1
+#define DK_MODBUS_VERSION_MINOR     2
+#define DK_MODBUS_VERSION_REVISION  3
+
 #define MODBUS_ERROR_CODE_FC_ERROR      1
 #define MODBUS_ERROR_CODE_ADDR_ERROR    2
 #define MODBUS_ERROR_CODE_VALUE_ERROR   3
@@ -37,5 +42,9 @@ uint8_t CModbusWriteLength( uint8_t* packet );
 uint8_t* CModbusReadContent( uint8_t* packet );
 uint8_t CModbusReadLength( uint8_t* packet );
 uint8_t CModbusErrorCode( uint8_t* packet );
+
+// v021 新增: IOBoard 韌體版本查詢和 DFU 模式函式
+int CModbusVersionGet(uint16_t hid_pid, uint16_t hid_port, uint16_t hid_address, uint16_t count, uint16_t* version, uint16_t timeout_ms);
+int CModbusEnterDFUMode(uint16_t hid_pid, uint16_t hid_port, uint16_t timeout_ms);
 
 #endif

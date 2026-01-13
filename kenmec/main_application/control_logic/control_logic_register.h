@@ -114,6 +114,34 @@
 #define REG_PUMP_MIN_SPEED_STR "PUMP_MIN_SPEED" // 45031 - 幫浦最低運轉速度（RPM 或 Hz）
 #define REG_PUMP_MAX_SPEED_STR "PUMP_MAX_SPEED" // 45032 - 幫浦最高運轉速度（RPM 或 Hz）
 
+/* 主泵輪換控制暫存器 - 雙泵浦定時輪流主控功能 */
+#define REG_PUMP_SWITCH_HOUR_STR "PUMP_SWITCH_HOUR"           // 45034 - 主泵切換時數設定 (小時, 0=停用)
+#define REG_PRIMARY_PUMP_INDEX_STR "PRIMARY_PUMP_INDEX"       // 45045 - 當前主泵編號 (HMI 可指定)
+#define REG_CURRENT_PRIMARY_AUTO_HOURS_STR "CURRENT_PRIMARY_AUTO_HOURS"     // 45046 - 顯示用累積小時
+#define REG_CURRENT_PRIMARY_AUTO_MINUTES_STR "CURRENT_PRIMARY_AUTO_MINUTES" // 45047 - 顯示用累積分鐘
+#define REG_PUMP1_USE_STR "PUMP1_USE"                         // 45036 - Pump1 啟用開關 (0=停用, 1=啟用)
+#define REG_PUMP2_USE_STR "PUMP2_USE"                         // 45037 - Pump2 啟用開關 (0=停用, 1=啟用)
+
+/* AUTO 模式累計時間暫存器 - 記錄主泵在 AUTO 模式的運轉時間 (斷電保持) */
+#define REG_PUMP1_AUTO_MODE_HOURS_STR "PUMP1_AUTO_MODE_HOURS"     // 42170 - Pump1 AUTO 模式累計時間 (小時)
+#define REG_PUMP2_AUTO_MODE_HOURS_STR "PUMP2_AUTO_MODE_HOURS"     // 42171 - Pump2 AUTO 模式累計時間 (小時)
+#define REG_PUMP1_AUTO_MODE_MINUTES_STR "PUMP1_AUTO_MODE_MINUTES" // 42172 - Pump1 AUTO 模式累計時間 (分鐘)
+#define REG_PUMP2_AUTO_MODE_MINUTES_STR "PUMP2_AUTO_MODE_MINUTES" // 42173 - Pump2 AUTO 模式累計時間 (分鐘)
+
+/* 泵浦運轉時間寄存器 - 記錄泵浦累計運轉時間 (斷電保持) */
+#define REG_PUMP1_RUNTIME_SEC_STR "PUMP1_RUNTIME_SEC"     // 42161 - Pump1 運轉時間 (秒, 0-59)
+#define REG_PUMP1_RUNTIME_MIN_STR "PUMP1_RUNTIME_MIN"     // 42162 - Pump1 運轉時間 (分, 0-59)
+#define REG_PUMP1_RUNTIME_HOUR_STR "PUMP1_RUNTIME_HOUR"   // 42163 - Pump1 運轉時間 (時, 0-23)
+#define REG_PUMP1_RUNTIME_DAY_STR "PUMP1_RUNTIME_DAY"     // 42164 - Pump1 運轉時間 (天, 累積)
+#define REG_PUMP2_RUNTIME_SEC_STR "PUMP2_RUNTIME_SEC"     // 42165 - Pump2 運轉時間 (秒, 0-59)
+#define REG_PUMP2_RUNTIME_MIN_STR "PUMP2_RUNTIME_MIN"     // 42166 - Pump2 運轉時間 (分, 0-59)
+#define REG_PUMP2_RUNTIME_HOUR_STR "PUMP2_RUNTIME_HOUR"   // 42167 - Pump2 運轉時間 (時, 0-23)
+#define REG_PUMP2_RUNTIME_DAY_STR "PUMP2_RUNTIME_DAY"     // 42168 - Pump2 運轉時間 (天, 累積)
+
+/* 泵浦運轉時間歸零控制 */
+#define REG_PUMP1_RUNTIME_RESET_STR "PUMP1_RUNTIME_RESET" // 45041 - Pump1 運轉時間歸零
+#define REG_PUMP2_RUNTIME_RESET_STR "PUMP2_RUNTIME_RESET" // 45042 - Pump2 運轉時間歸零
+
 /* 系統時序控制暫存器 - 控制系統運行的各種延遲和時間參數 */
 #define REG_TARGET_PRESSURE_STR "TARGET_PRESSURE"       // 45051 - 目標壓力值（重複定義）
 #define REG_START_DELAY_STR "START_DELAY"               // 45052 - 啟動延遲時間（秒）
@@ -142,6 +170,9 @@
 /* 閥門手動模式暫存器 */
 #define REG_VALVE_MANUAL_MODE_STR "VALVE_MANUAL_MODE" // 45061 - 閥門手動模式開關
 
+/* 補水泵手動模式暫存器 */
+#define REG_WATER_PUMP_MANUAL_MODE_STR "WATER_PUMP_MANUAL_MODE" // 45050 - 補水泵手動模式開關 (0=自動, 1=手動)
+
 /* 壓力警報暫存器 */
 #define REG_HIGH_PRESSURE_ALARM_STR "HIGH_PRESSURE_ALARM"       // 46271 - 高壓警報觸發閾值
 #define REG_HIGH_PRESSURE_SHUTDOWN_STR "HIGH_PRESSURE_SHUTDOWN" // 46272 - 高壓關機觸發閾值
@@ -149,6 +180,39 @@
 /* 溫度限制暫存器 */
 #define REG_T_HIGH_ALARM_STR "T_HIGH_ALARM"  // 46001 - 最高溫度限制（°C）
 #define REG_T_LOW_ALARM_STR "T_LOW_ALARM"    // 46002 - 最低溫度限制（°C）
+
+/* 壓力限制暫存器 (LS80-2) */
+#define REG_P_HIGH_ALARM_STR "P_HIGH_ALARM"  // 46201 - 最高壓力限制（Bar）
+#define REG_P_LOW_ALARM_STR "P_LOW_ALARM"    // 46202 - 最低壓力限制（Bar）
+
+/* 壓力停機保護暫存器 (LS80-2) */
+#define REG_P2_PRESS_HIGH_STOP_STR "P2_PRESS_HIGH_STOP"   // 46272 - P2壓力過高停機閾值（Bar）
+#define REG_P4_PRESS_LOW_STOP_STR "P4_PRESS_LOW_STOP"     // 46273 - P4壓力過低停機閾值（Bar）
+#define REG_P2_P4_PRESS_STOP_STR "P2_P4_PRESS_STOP"       // 46274 - (P2-P4)壓差停機閾值（Bar）
+
+/* 流量限制暫存器 (LS80-3) */
+#define REG_F_HIGH_ALARM_STR "F_HIGH_ALARM"  // 46401 - 最高流量限制（LPM）
+#define REG_F_LOW_ALARM_STR "F_LOW_ALARM"    // 46402 - 最低流量限制（LPM）
+
+/* PID 參數暫存器 - LS80-1 溫度控制 */
+#define REG_PID_TEMP_KP_STR "PID_TEMP_KP"                           // 45501 - 溫度控制 Kp (×100)
+#define REG_PID_TEMP_KI_STR "PID_TEMP_KI"                           // 45502 - 溫度控制 Ki (×100)
+#define REG_PID_TEMP_KD_STR "PID_TEMP_KD"                           // 45503 - 溫度控制 Kd (×100)
+
+/* PID 參數暫存器 - LS80-2 壓力控制 */
+#define REG_PID_PRESS_KP_STR "PID_PRESS_KP"                         // 45504 - 壓力控制 Kp (×100)
+#define REG_PID_PRESS_KI_STR "PID_PRESS_KI"                         // 45505 - 壓力控制 Ki (×100)
+#define REG_PID_PRESS_KD_STR "PID_PRESS_KD"                         // 45506 - 壓力控制 Kd (×100)
+
+/* PID 參數暫存器 - LS80-3 流量控制 */
+#define REG_PID_FLOW_KP_STR "PID_FLOW_KP"                           // 45507 - 流量控制 Kp (×100)
+#define REG_PID_FLOW_KI_STR "PID_FLOW_KI"                           // 45508 - 流量控制 Ki (×100)
+#define REG_PID_FLOW_KD_STR "PID_FLOW_KD"                           // 45509 - 流量控制 Kd (×100)
+
+/* PID 預設值恢復暫存器 */
+#define REG_RESTORE_DEFAULT_PID_TEMP_STR "RESTORE_DEFAULT_PID_TEMP"   // 45900 - 恢復溫度 PID 預設值
+#define REG_RESTORE_DEFAULT_PID_PRESS_STR "RESTORE_DEFAULT_PID_PRESS" // 45901 - 恢復壓力 PID 預設值
+#define REG_RESTORE_DEFAULT_PID_FLOW_STR "RESTORE_DEFAULT_PID_FLOW"   // 45902 - 恢復流量 PID 預設值
 
 /* 幫浦速度命令暫存器 */
 #define REG_PUMP1_SPEED_CMD_STR "PUMP1_SPEED_CMD" // 411037 - 幫浦1速度命令（重複定義）
@@ -175,6 +239,7 @@
 
 /* 液位檢測暫存器 */
 #define REG_HIGH_LEVEL_STR "HIGH_LEVEL"         // 411112 - 高液位檢測（0=未達, 1=達到）
+#define REG_MID_LEVEL_STR "MID_LEVEL"           // 411016 - 中液位檢測（0=未達, 1=達到）[LS300D專用]
 #define REG_LOW_LEVEL_STR "LOW_LEVEL"           // 411113 - 低液位檢測（0=未達, 1=達到）
 #define REG_LEAK_DETECTION_STR "LEAK_DETECTION" // 411114 - 洩漏檢測（0=正常, 1=洩漏）
 

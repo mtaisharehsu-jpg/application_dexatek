@@ -22,7 +22,21 @@
 #include "kenmec/main_application/kenmec_config.h"
 #include "kenmec/main_application/control_logic/control_logic_manager.h"
 
-// static const char *tag = "redfish_resources";
+static const char *tag = "redfish_resources";
+static int open_db_with_settings(const char *path, sqlite3 **out_db)
+{
+    int rc = sqlite3_open(path, out_db);
+    if (rc != SQLITE_OK) return rc;
+    sqlite3_busy_timeout(*out_db, 5000);
+    char *err_msg = NULL;
+    sqlite3_exec(*out_db, "PRAGMA journal_mode=WAL;", NULL, NULL, &err_msg);
+    if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+    sqlite3_exec(*out_db, "PRAGMA synchronous=NORMAL;", NULL, NULL, &err_msg);
+    if (err_msg) { sqlite3_free(err_msg); err_msg = NULL; }
+    return SQLITE_OK;
+}
+
+#define sqlite3_open(PATH, DBP) open_db_with_settings((PATH), (DBP))
 static int g_securitypolicy_applytime_onreset = 0; // set by POST to annotate next GET
 
 #define INTERFACE_ID "1"
@@ -211,8 +225,7 @@ static void write_role_json(char *buf, size_t buflen, const char *role_id,
           "\"Name\":\"%s Role\"," 
           "\"RoleId\":\"%s\","
           "\"IsPredefined\":%s,"
-          "\"AssignedPrivileges\":[%s],"
-          "\"Oem\":{}"
+          "\"AssignedPrivileges\":[%s]"
         "}",
         role_id, role_id, role_id, role_id, is_predefined, assigned_buf);
 }
@@ -243,7 +256,7 @@ int handle_role_member(const char *role_id, http_response_t *response)
 
     char buf[1024];
     const char *admin_privs[] = {"Login","ConfigureManager","ConfigureUsers","ConfigureComponents","ConfigureSelf"};
-    const char *oper_privs[]  = {"Login","ConfigureSelf","ConfigureComponents"};
+    const char *oper_privs[]  = {"Login","ConfigureComponents","ConfigureSelf"};
     const char *ro_privs[]    = {"Login","ConfigureSelf"};
 
     if (strcmp(role_id, "Administrator") == 0) {
@@ -270,7 +283,9 @@ int handle_role_member(const char *role_id, http_response_t *response)
     strcpy(response->body, buf);
     response->content_length = strlen(response->body);
     return SUCCESS;
-}int handle_cdu_oem_control_logics_action_read(const char *cdu_id, const char *member_id, const http_request_t *request, http_response_t *response) {
+}
+
+int handle_cdu_oem_control_logics_action_read(const char *cdu_id, const char *member_id, const http_request_t *request, http_response_t *response) {
     if (!cdu_id || !member_id || !request || !response) return ERROR_INVALID_PARAM;
 
     // int ret = ERROR_GENERAL;
@@ -713,8 +728,81 @@ int handle_account_service(http_response_t *response) {
           "\"Name\":\"Account Service\"," 
           "\"ServiceEnabled\":true,"
           "\"Accounts\":{\"@odata.id\":\"/redfish/v1/AccountService/Accounts\"},"
-          "\"Roles\":{\"@odata.id\":\"/redfish/v1/AccountService/Roles\"}"
+          "\"Roles\":{\"@odata.id\":\"/redfish/v1/AccountService/Roles\"},"
+          "\"PrivilegeMap\":{\"@odata.id\":\"/redfish/v1/AccountService/PrivilegeMap\"}"
         "}");
+    response->content_length = strlen(response->body);
+    return SUCCESS;
+}
+
+int handle_account_service_privilege_map(http_response_t *response)
+{
+    if (!response) return ERROR_INVALID_PARAM;
+    response->status_code = HTTP_OK;
+    strcpy(response->content_type, CONTENT_TYPE_JSON);
+    snprintf(response->body, sizeof(response->body),
+        "{\n"
+        "  \"@odata.type\": \"#PrivilegeRegistry.v1_1_5.PrivilegeRegistry\",\n"
+        "  \"@odata.id\": \"/redfish/v1/AccountService/PrivilegeMap\",\n"
+        "  \"Id\": \"PrivilegeRegistry\",\n"
+        "  \"Name\": \"Base Privilege Registry\",\n"
+        "  \"Description\": \"Privileges and operation mappings for this Redfish service\",\n"
+        "  \"PrivilegesUsed\": [\"Login\", \"ConfigureManager\", \"ConfigureUsers\", \"ConfigureComponents\", \"ConfigureSelf\"],\n"
+        "  \"Mappings\": [\n"
+        "    {\n"
+        "      \"Entity\": \"Manager\",\n"
+        "      \"OperationMap\": {\n"
+        "        \"GET\":    [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"HEAD\":   [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"POST\":   [ { \"Privilege\": [\"ConfigureManager\"] } ],\n"
+        "        \"DELETE\": [ { \"Privilege\": [\"ConfigureManager\"] } ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"Entity\": \"ManagerAccount\",\n"
+        "      \"OperationMap\": {\n"
+        "        \"GET\":   [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"HEAD\":  [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"POST\":  [ { \"Privilege\": [\"ConfigureUsers\"] } ],\n"
+        "        \"PATCH\": [ { \"Privilege\": [\"ConfigureUsers\"] } ],\n"
+        "        \"DELETE\":[ { \"Privilege\": [\"ConfigureUsers\"] } ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"Entity\": \"Session\",\n"
+        "      \"OperationMap\": {\n"
+        "        \"GET\":    [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"HEAD\":   [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"POST\":   [ { \"Privilege\": [\"ConfigureSelf\"] } ],\n"
+        "        \"DELETE\": [ { \"Privilege\": [\"ConfigureSelf\", \"ConfigureUsers\"] } ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"Entity\": \"CertificateService\",\n"
+        "      \"OperationMap\": {\n"
+        "        \"GET\":  [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"HEAD\": [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"POST\": [ { \"Privilege\": [\"ConfigureManager\"] } ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"Entity\": \"UpdateService\",\n"
+        "      \"OperationMap\": {\n"
+        "        \"GET\":  [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"HEAD\": [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"POST\": [ { \"Privilege\": [\"ConfigureManager\"] } ]\n"
+        "      }\n"
+        "    },\n"
+        "    {\n"
+        "      \"Entity\": \"ThermalEquipment\",\n"
+        "      \"OperationMap\": {\n"
+        "        \"GET\":  [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"HEAD\": [ { \"Privilege\": [\"Login\"] } ],\n"
+        "        \"POST\": [ { \"Privilege\": [\"ConfigureComponents\"] } ]\n"
+        "      }\n"
+        "    }\n"
+        "  ]\n"
+        "}\n");
     response->content_length = strlen(response->body);
     return SUCCESS;
 }
@@ -2878,8 +2966,6 @@ int handle_manager_reset_action(const char *manager_id, const http_request_t *re
         return SUCCESS;
     }
 
-    // TODO: Implement actual reset logic here
-    // For now, just return success
     printf("Manager.Reset action called for manager %s with ResetType: %s\n", manager_id, reset_type_str);
     
     response->status_code = HTTP_OK;
@@ -2950,6 +3036,18 @@ char* generate_thermalequipment_json(const char *thermalequipment_id) {
             return NULL;
         }
         
+        char firmware_version[32];
+        snprintf(firmware_version, sizeof(firmware_version), "%d.%d.%d", 
+                 CONFIG_APPLICATION_MAJOR_VERSION, 
+                 CONFIG_APPLICATION_MINOR_VERSION, 
+                 CONFIG_APPLICATION_PATCH_VERSION);
+
+        char model[32];
+        system_model_get(model);
+
+        char serial_number[32];
+        system_serial_number_get(serial_number);
+
         snprintf(json, 2048,
             "{"
             "\"@odata.type\":\"#CoolingUnit.v1_3_0.CoolingUnit\","
@@ -2962,9 +3060,9 @@ char* generate_thermalequipment_json(const char *thermalequipment_id) {
             "\"State\":\"Enabled\","
             "\"Health\":\"OK\""
             "},"
-            "\"Coolant\":{"
-            "\"CoolantType\":\"Water\""
-            "},"
+            "\"FirmwareVersion\":\"%s\","
+            "\"Model\":\"%s\","
+            "\"SerialNumber\":\"%s\","
             "\"Oem\":{"
             "\"Kenmec\":{"
             "\"IOBoards\":{\"@odata.id\":\"/redfish/v1/ThermalEquipment/CDUs/%s/Oem/Kenmec/IOBoards\"},"
@@ -2973,7 +3071,7 @@ char* generate_thermalequipment_json(const char *thermalequipment_id) {
             "}"
             "}"
             "}",
-            cdu_id, cdu_id, cdu_id, cdu_id, cdu_id, cdu_id);
+            cdu_id, cdu_id, cdu_id, firmware_version, model, serial_number, cdu_id, cdu_id, cdu_id);
     }
 
     return json;
@@ -3138,7 +3236,6 @@ int handle_session_service(http_response_t *response) {
     return SUCCESS;
 }
 
-// TODO: Need to revise to dynamic sessions collection.
 int handle_sessions_collection(const http_request_t *request, http_response_t *response)
 {
     if (!request || !response) return ERROR_INVALID_PARAM;
@@ -3593,12 +3690,14 @@ int handle_cdu_oem(const char *cdu_id, http_response_t *response) {
         "\"Kenmec\":{"
             "\"@odata.type\":\"#KenmecCDUOem.v1_0_0.KenmecCDUOem\"," 
             "\"@odata.id\":\"/redfish/v1/ThermalEquipment/CDUs/%s/Oem/Kenmec\"," 
+            "\"Name\":\"Kenmec OEM Extensions\","
+            "\"Description\":\"Kenmec-specific extensions for CDU resource\","
             "\"IOBoards\":{"
                 "\"@odata.id\":\"/redfish/v1/ThermalEquipment/CDUs/%s/Oem/Kenmec/IOBoards\""
-            "}"
+            "},"
             "\"Config\":{"
                 "\"@odata.id\":\"/redfish/v1/ThermalEquipment/CDUs/%s/Oem/Kenmec/Config\""
-            "}"
+            "},"
             "\"ControlLogics\":{"
                 "\"@odata.id\":\"/redfish/v1/ThermalEquipment/CDUs/%s/Oem/Kenmec/ControlLogics\""
             "}"
@@ -4615,8 +4714,258 @@ int handle_update_service_multipart_upload(const http_request_t *request, http_r
         extracted_bytes);
     response->content_length = strlen(response->body);
 
-    // Trigger firmware update
-    system_firmware_update();
+    // Schedule firmware update to run after response is sent
+    response->post_action = LABEL_POST_ACTION_FIRMWARE_UPDATE;
     
     return SUCCESS;
 }
+
+int handle_cdu_oem_ioboard_ota(const char *cdu_id, const char *member_id, const http_request_t *request, http_response_t *response)
+{
+    if (!cdu_id || !member_id || !request || !response) return ERROR_INVALID_PARAM;
+
+    // debug(tag, "handle_cdu_oem_ioboard_ota: cdu_id: %s, member_id: %s", cdu_id, member_id);
+
+    // debug(tag, "request->body: %s", request->body);
+
+    // Validate CDU and member
+    if (strcmp(cdu_id, "1") != 0) {
+        response->status_code = HTTP_NOT_FOUND;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        snprintf(response->body, sizeof(response->body), "{\"error\":{\"code\":\"Base.1.15.0.ResourceMissingAtURI\",\"message\":\"The resource at the URI /redfish/v1/ThermalEquipment/CDUs/%s was not found.\"}}", cdu_id);
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+
+#if 0
+    uint16_t hid_pid_list[32] = {0};
+    size_t hid_count = 0;
+    if (redfish_hid_device_list_get(hid_pid_list, 32, &hid_count) != SUCCESS) hid_count = 0;
+    long port_idx = strtol(member_id, NULL, 10);
+    if (port_idx <= 0 || (size_t)port_idx > hid_count || port_idx > 4) {
+        response->status_code = HTTP_NOT_FOUND;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        snprintf(response->body, sizeof(response->body), "{\"error\":{\"code\":\"Base.1.15.0.ResourceMissingAtURI\",\"message\":\"The resource at the URI /redfish/v1/ThermalEquipment/CDUs/%s/Oem/Kenmec/IOBoards/%s was not found.\"}}", cdu_id, member_id);
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+#endif
+
+    // Validate Content-Type multipart
+    const char *content_type = NULL;
+    for (int i = 0; i < request->header_count; i++) {
+        if (strcasecmp(request->headers[i][0], "Content-Type") == 0) {
+            content_type = request->headers[i][1];
+            break;
+        }
+    }
+
+    if (!content_type || strstr(content_type, "multipart/") == NULL) {
+        response->status_code = HTTP_BAD_REQUEST;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        strcpy(response->body, "{\"error\":{\"code\":\"Base.1.15.0.MalformedJSON\",\"message\":\"Content-Type must be multipart.*\"}}\n");
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+
+    // Extract boundary from Content-Type
+    char *boundary = extract_boundary(content_type);
+    if (!boundary) {
+        response->status_code = HTTP_BAD_REQUEST;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        strcpy(response->body, "{\"error\":{\"code\":\"Base.1.15.0.MalformedJSON\",\"message\":\"Missing boundary in multipart Content-Type\"}}\n");
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+
+    // Create output file path for OTA file (different from firmware file)
+    char ota_filepath[256];
+    snprintf(ota_filepath, sizeof(ota_filepath), "/tmp/upload.bin");
+    
+    // Create extracted file path
+    char extracted_filepath[256];
+    snprintf(extracted_filepath, sizeof(extracted_filepath), "%s.extracted", ota_filepath);
+    
+    // Parse multipart and extract file content
+    long extracted_bytes = 0;
+    int parse_result = parse_multipart_file(request->upload_tmp_path, boundary, extracted_filepath, &extracted_bytes);
+    
+    free(boundary);
+    
+    if (parse_result != 0) {
+        response->status_code = HTTP_INTERNAL_SERVER_ERROR;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        strcpy(response->body, "{\"error\":{\"code\":\"Base.1.15.0.GeneralError\",\"message\":\"Failed to parse multipart data\"}}\n");
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+    
+    // Replace original file with extracted content
+    if (rename(extracted_filepath, ota_filepath) != 0) {
+        response->status_code = HTTP_INTERNAL_SERVER_ERROR;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        strcpy(response->body, "{\"error\":{\"code\":\"Base.1.15.0.GeneralError\",\"message\":\"Failed to save extracted file\"}}\n");
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+
+    // Respond with path where OTA file was stored
+    response->status_code = HTTP_OK;
+    strcpy(response->content_type, CONTENT_TYPE_JSON);
+    snprintf(response->body, sizeof(response->body),
+        "{\n"
+        "  \"Message\": \"OTA file upload accepted and file extracted\",\n"
+        "  \"SavedTo\": \"%s\",\n"
+        "  \"Bytes\": %ld\n"
+        "}\n",
+        ota_filepath,
+        extracted_bytes);
+    response->content_length = strlen(response->body);
+
+    // Note: OTA file processing can be handled separately from firmware update
+    // If you want to trigger OTA processing, you can add a post_action here
+    
+
+    // get IOBoard PID
+    uint16_t hid_pid = 0;
+    uint16_t port_idx = atoi(member_id) - 1;
+    hid_manager_port_pid_get(port_idx, &hid_pid);
+
+    debug(tag, "hid_pid: 0x%04X, port_idx: %d", hid_pid, port_idx);
+
+    // IOBoard enter DFU mode
+    int ret = control_hardware_enter_dfu_mode(hid_pid, (uint8_t)port_idx, 1000);
+    if (ret != SUCCESS) {
+        response->status_code = HTTP_INTERNAL_SERVER_ERROR;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        strcpy(response->body, "{\"error\":{\"code\":\"Base.1.15.0.GeneralError\",\"message\":\"Failed to enter DFU mode\"}}\n");
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+
+    // wait a while for device to enter DFU mode
+    time_delay_ms(3000);
+
+    // OTA device via dfu-util
+    char command[256];
+    if (hid_pid == 0xA2) {
+        snprintf(command, sizeof(command), "dfu-util -d 1fc9:00b2 -D %s", ota_filepath);
+    } else if (hid_pid == 0xA3) {
+        snprintf(command, sizeof(command), "dfu-util -d 1fc9:00b3 -D %s", ota_filepath);
+    }
+    ret = system(command);
+    debug(tag, "command: %s, ret: %d", command, ret);
+    if (ret != 0) {
+        response->status_code = HTTP_INTERNAL_SERVER_ERROR;
+        strcpy(response->content_type, CONTENT_TYPE_JSON);
+        strcpy(response->body, "{\"error\":{\"code\":\"Base.1.15.0.GeneralError\",\"message\":\"Failed to enter DFU mode\"}}\n");
+        response->content_length = strlen(response->body);
+        return SUCCESS;
+    }
+    
+    return SUCCESS;
+}
+
+// // Handle file GET requests
+// int handle_cdu_oem_log_file_get(const char *cdu_id, const http_request_t *request, http_response_t *response) {
+//     if (!request || !response) {
+//         return ERROR_INVALID_PARAM;
+//     }
+
+//     // Initialize response structure
+//     memset(response, 0, sizeof(http_response_t));
+
+//     // Parse request JSON
+//     cJSON *root = cJSON_Parse(request->body);
+//     if (!root) {
+//         response->status_code = HTTP_BAD_REQUEST;
+//         strcpy(response->content_type, "application/json");
+//         snprintf(response->body, sizeof(response->body), "{\"error\":{\"code\":\"Base.1.15.0.ActionParameterMissing\",\"message\":\"Invalid JSON.\"}}" );
+//         response->content_length = strlen(response->body);
+//         return SUCCESS;
+//     }
+
+//     // get file data from json
+//     cJSON *jsonFileDate = cJSON_GetObjectItemCaseSensitive(root, "FileDate");
+//     char *file_path = NULL;
+//     if (cJSON_IsString(jsonFileDate)) {
+//         file_path = jsonFileDate->valuestring;
+//     } else {
+//         response->status_code = HTTP_BAD_REQUEST;
+//         strcpy(response->content_type, "application/json");
+//         snprintf(response->body, sizeof(response->body), "{\"error\":{\"code\":\"Base.1.15.0.ActionParameterMissing\",\"message\":\"Invalid JSON.\"}}" );
+//         response->content_length = strlen(response->body);
+//         cJSON_Delete(root);
+//         return SUCCESS;
+//     }
+
+//     // Check if file exists and is readable
+//     char file_path_full[256];
+// 	snprintf(file_path_full, sizeof(file_path_full), "%s/%s.log", CONFIG_LOG_FILE_STORAGE_PATH, file_path);
+//     debug("123", "file_path_full: %s", file_path_full);
+
+//     FILE *file = fopen(file_path_full, "rb");
+//     if (!file) {
+//         response->status_code = HTTP_NOT_FOUND;
+//         strcpy(response->content_type, CONTENT_TYPE_JSON);
+//         snprintf(response->body, sizeof(response->body),
+//                 "{\"error\":{\"code\":\"Base.1.15.0.ResourceMissingAtURI\",\"message\":\"File not found: %s\"}}",
+//                 file_path);
+//         response->content_length = strlen(response->body);
+//         cJSON_Delete(root);
+//         return SUCCESS;
+//     }
+
+//     // Get file size
+//     fseek(file, 0, SEEK_END);
+//     long file_size = ftell(file);
+//     fseek(file, 0, SEEK_SET);
+
+//     // Check if file is too large for response body
+//     // TODO: use chunked transfer encoding for large files?
+//     if (file_size > MAX_JSON_SIZE - 1) {
+//         file_size = MAX_JSON_SIZE - 1;
+//     }
+
+//     // Read file content
+//     size_t bytes_read = fread(response->body, 1, (size_t)file_size, file);
+//     fclose(file);
+
+//     if (bytes_read != (size_t)file_size) {
+//         response->status_code = HTTP_INTERNAL_SERVER_ERROR;
+//         strcpy(response->content_type, CONTENT_TYPE_JSON);
+//         strcpy(response->body, "{\"error\":{\"code\":\"Base.1.15.0.GeneralError\",\"message\":\"Failed to read file\"}}");
+//         response->content_length = strlen(response->body);
+//         return SUCCESS;
+//     }
+
+//     // Null terminate the content
+//     response->body[bytes_read] = '\0';
+//     response->content_length = (int)bytes_read;
+
+//     // Determine content type based on file extension
+//     const char *extension = strrchr(file_path_full, '.');
+//     if (extension) {
+//         if (strcasecmp(extension, ".json") == 0) {
+//             strcpy(response->content_type, "application/json");
+//         } else if (strcasecmp(extension, ".txt") == 0) {
+//             strcpy(response->content_type, "text/plain");
+//         } else if (strcasecmp(extension, ".html") == 0) {
+//             strcpy(response->content_type, "text/html");
+//         } else if (strcasecmp(extension, ".xml") == 0) {
+//             strcpy(response->content_type, "application/xml");
+//         } else if (strcasecmp(extension, ".log") == 0) {
+//             strcpy(response->content_type, "text/plain");
+//         } else {
+//             strcpy(response->content_type, "application/octet-stream");
+//         }
+//     } else {
+//         strcpy(response->content_type, "application/octet-stream");
+//     }
+
+//     response->status_code = HTTP_OK;
+
+//     cJSON_Delete(root);
+    
+//     return SUCCESS;
+// }

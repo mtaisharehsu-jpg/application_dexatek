@@ -4,7 +4,7 @@
  * 【功能概述】
  * 本模組實現 CDU 系統的閥門控制功能,支援手動/自動模式切換。
  * 自動模式: 直接將命令值傳遞給狀態寄存器
- * 手動模式: 監控 HMI 設定並更新狀態寄存器
+ * 手動模式: 從 HMI 設定寄存器 (40046) 讀取開度,寫入命令寄存器 (411151) 及狀態寄存器 (40047)
  *
  * 【控制目標】
  * - 閥門狀態控制
@@ -17,13 +17,13 @@
  *
  * 【控制模式】
  * - 自動模式 (REG_VALVE_MANUAL=0): 監控 REG_VALVE_COMMAND 變化,有變化時才傳遞給 REG_VALVE_STATE
- * - 手動模式 (REG_VALVE_MANUAL=1): 監控 HMI 對 REG_VALVE_COMMAND 的設定變化,有變化時才寫入 REG_VALVE_STATE
+ * - 手動模式 (REG_VALVE_MANUAL=1): 讀取 HMI 設定 (40046) → 寫入命令寄存器 (411151) → 更新狀態寄存器 (40047)
  *
  * 【系統行為】
  * 1. 系統開機完成後: control_logic_6_enable (41006) 預設為 OFF
  * 2. 當偵測到 REG_VALVE_MANUAL_MODE (45061) = 0 時,自動將 control_logic_6_enable (41006) 設為 ON
  * 3. 自動模式時 (REG_VALVE_MANUAL=0): 監控 modbus_register(411151) 變化 → 有變化時才更新 modbus_register(40047)
- * 4. 手動模式時 (REG_VALVE_MANUAL=1): 監控 HMI 設定 modbus_register(411151) 變化 → 有變化時才更新 modbus_register(40047)
+ * 4. 手動模式時 (REG_VALVE_MANUAL=1): 讀取 modbus_register(40046) HMI 設定 → 寫入 modbus_register(411151) → 更新 modbus_register(40047)
  *
  * 作者: [DK]
  * 日期: 2025
@@ -45,6 +45,7 @@ static control_logic_register_t _control_logic_register_list[CONFIG_REGISTER_LIS
 // 閥門控制寄存器
 static uint32_t REG_CONTROL_LOGIC_6_ENABLE = 41006; // 控制邏輯6啟用
 
+static uint32_t REG_VALVE_SETPOINT = 40046;   // HMI 手動設定閥門開度 (%)
 static uint32_t REG_VALVE_STATE = 40047;      // 閥門狀態輸出值 (%)
 static uint32_t REG_VALVE_COMMAND = 411151;   // 閥門命令設定值 (%)
 static uint32_t REG_VALVE_MANUAL = 45061;     // 閥門手動模式 (0=自動, 1=手動)
@@ -119,29 +120,41 @@ static void execute_auto_mode(valve_controller_t* controller) {
     }
 }
 
-// 手動模式控制: 檢測 HMI 設定變化並更新狀態寄存器
+// 手動模式控制: 從 HMI 設定寄存器讀取開度並寫入命令寄存器
 static void execute_manual_mode(valve_controller_t* controller) {
-    // 讀取當前命令值
-    uint16_t current_command = read_holding_register(REG_VALVE_COMMAND);
+    // 從 HMI 設定寄存器 (40046) 讀取手動開度設定
+    uint16_t hmi_setpoint = read_holding_register(REG_VALVE_SETPOINT);
 
-    if (current_command == 0xFFFF) {
-        error(tag, "手動模式: 讀取 REG_VALVE_COMMAND 失敗");
+    if (hmi_setpoint == 0xFFFF) {
+        error(tag, "手動模式: 讀取 REG_VALVE_SETPOINT (40046) 失敗");
         return;
     }
 
-    // 檢測命令值是否被 HMI 改變
-    if (current_command != controller->last_command_value) {
-        // HMI 設定了新值,將其寫入狀態寄存器
-        if (write_holding_register(REG_VALVE_STATE, current_command)) {
-            info(tag, "手動模式: HMI 設定變化檢測 %u → %u, 已更新 REG_VALVE_STATE",
-                 controller->last_command_value, current_command);
-            controller->last_command_value = current_command;
+    // 範圍檢查 (0-100%)
+    if (hmi_setpoint > 100) {
+        warn(tag, "手動模式: HMI 設定值超出範圍 (%u%%), 限制為 100%%", hmi_setpoint);
+        hmi_setpoint = 100;
+    }
+
+    // 檢測設定值變化
+    if (hmi_setpoint != controller->last_command_value) {
+        // 將 HMI 設定值寫入命令寄存器 (411151)
+        if (write_holding_register(REG_VALVE_COMMAND, hmi_setpoint)) {
+            info(tag, "手動模式: HMI 設定變化 %u → %u%%, 已寫入 REG_VALVE_COMMAND (411151)",
+                 controller->last_command_value, hmi_setpoint);
+
+            // 同時更新狀態寄存器 (40047)
+            if (write_holding_register(REG_VALVE_STATE, hmi_setpoint)) {
+                controller->last_command_value = hmi_setpoint;
+            } else {
+                error(tag, "手動模式: 寫入 REG_VALVE_STATE 失敗");
+            }
         } else {
-            error(tag, "手動模式: 寫入 REG_VALVE_STATE 失敗");
+            error(tag, "手動模式: 寫入 REG_VALVE_COMMAND 失敗");
         }
     } else {
-        // 命令值未變化
-        debug(tag, "手動模式: 命令值未變化 (%u)", current_command);
+        // 設定值未變化
+        debug(tag, "手動模式: HMI 設定值未變化 (%u%%)", hmi_setpoint);
     }
 }
 

@@ -529,4 +529,55 @@ int control_hardware_pwm_duty_all_get_from_ram(uint8_t hid_port, uint16_t duty[8
  */
 int control_hardware_pwm_period_all_get_from_ram(uint8_t hid_port, uint32_t period[8]);
 
+// ========== v021 新增函式宣告 ==========
+
+/**
+ * @brief 取得硬體版本號
+ *
+ * 透過 Modbus 讀取 IOBoard 的韌體版本號（主版本、次版本、修訂版本）。
+ *
+ * @param hid_pid HID 產品 ID
+ * @param hid_port HID 埠號
+ * @param version 指向 3 元素陣列的指標，存儲版本號 [major, minor, patch]
+ * @param timeout_ms 超時時間（毫秒）
+ * @return 成功返回 0，失敗返回負值錯誤碼
+ */
+int control_hardware_version_get(uint8_t hid_pid, uint8_t hid_port, uint16_t version[3], uint16_t timeout_ms);
+
+/**
+ * @brief 進入 DFU 韌體更新模式
+ *
+ * 發送命令讓 IOBoard 進入 DFU (Device Firmware Update) 模式，準備接收新韌體。
+ *
+ * @param hid_pid HID 產品 ID
+ * @param hid_port HID 埠號
+ * @param timeout_ms 超時時間（毫秒）
+ * @return 成功返回 0，失敗返回負值錯誤碼
+ */
+int control_hardware_enter_dfu_mode(uint8_t hid_pid, uint8_t hid_port, uint16_t timeout_ms);
+
+/**
+ * @brief 從 RAM 讀取類比輸出電壓
+ *
+ * 從緩存的 RAM 中讀取指定通道的類比輸出電壓，無需硬體通訊。
+ *
+ * @param hid_port HID 埠號
+ * @param channel 通道號（0-3）
+ * @param mV 指向電壓值的指標（單位：毫伏 mV）
+ * @return 成功返回 0，失敗返回負值錯誤碼
+ */
+int control_hardware_analog_output_voltage_get_from_ram(uint8_t hid_port, uint8_t channel, int32_t *mV);
+
+/**
+ * @brief 從 RAM 讀取類比輸出電流
+ *
+ * 從緩存的 RAM 中讀取指定通道的類比輸出電流，無需硬體通訊。
+ *
+ * @param hid_port HID 埠號
+ * @param channel 通道號（0-3）
+ * @param mA 指向電流值的指標（單位：毫安 mA）
+ * @return 成功返回 0，失敗返回負值錯誤碼
+ */
+int control_hardware_analog_output_current_get_from_ram(uint8_t hid_port, uint8_t channel, int32_t *mA);
+
 #endif /* CONTROL_LOGIC_HARDWARE_H */ 
