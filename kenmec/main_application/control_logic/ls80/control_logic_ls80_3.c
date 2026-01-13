@@ -200,8 +200,8 @@ static flow_pid_controller_t flow_pid = {
 static flow_control_config_t flow_config = {
     .tracking_mode = FLOW_TRACKING_MODE_F2_TO_FSET,
     .target_flow_rate = 200.0f,  // 預設目標流量 200 L/min
-    .flow_high_limit = 50.0f,   // 流量上限 500 L/min
-    .flow_low_limit = 10.0f,     // 流量下限 50 L/min
+    .flow_high_limit = 160.0f,   // 流量上限 160 L/min
+    .flow_low_limit = 5.0f,     // 流量下限 5 L/min
     .tracking_ratio = 1.0f       // 1:1追蹤比例
 };
 
