@@ -5,21 +5,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ctype.h>
-#include <pthread.h>
-#include <unistd.h>
 
 #include "config.h"
-#include "../../kenmec_config.h"
 #include "redfish_resources.h"
 #include "redfish_client_info_handle.h"
 #include "redfish_server.h"
 #include "redfish_init.h"
-#include "tls_server.h"
-#include "dexatek/main_application/include/utilities/os_utilities.h"
 
 static const char *tag = "redfish_server";
-
-#define DEBUG_REDISH_SERVER 0
 
 int redfish_server_init(void) {
     debug(tag, "Redfish server initialized");
@@ -28,8 +21,8 @@ int redfish_server_init(void) {
 
 void redfish_server_cleanup(void) {
     debug(tag, "Redfish server cleanup completed");
-
 }
+
 
 int parse_http_request(const char *raw_request, http_request_t *request, int is_https) {
     if (!raw_request || !request) {
@@ -247,48 +240,19 @@ static int check_can_delete_session(const http_request_t *request, const char *i
 
     int count = session_list_get(sessions);
     const char *owner = NULL;
-    int target_session_id = -1;
-    int requesting_session_id = -1;
-    
     if (count > 0) {
         if (is_numeric_id) {
-            // Deleting by session ID - need to find both target session and requesting session
             long want_id = strtol(id_or_token, NULL, 10);
-            target_session_id = (int)want_id;
-            
-            // Find the target session
             for (int i = 0; i < count; i++) {
-                if (sessions[i].id == target_session_id) {
+                if (sessions[i].id == (int)want_id) {
                     owner = sessions[i].username;
                     break;
-                }
-            }
-            
-            // Find the requesting session (the one with the token being used)
-            // Extract X-Auth-Token from request headers
-            const char *request_token = NULL;
-            for (int i = 0; i < request->header_count; i++) {
-                if (strncmp(request->headers[i][0], "X-Auth-Token", 12) == 0) {
-                    request_token = request->headers[i][1];
-                    break;
-                }
-            }
-            
-            if (request_token) {
-                for (int i = 0; i < count; i++) {
-                    if (sessions[i].token[0] != '\0' && strcmp(sessions[i].token, request_token) == 0) {
-                        requesting_session_id = sessions[i].id;
-                        break;
-                    }
                 }
             }
         } else {
-            // Deleting by token - this is the same session
             for (int i = 0; i < count; i++) {
                 if (sessions[i].token[0] != '\0' && strcmp(sessions[i].token, id_or_token) == 0) {
                     owner = sessions[i].username;
-                    target_session_id = sessions[i].id;
-                    requesting_session_id = sessions[i].id; // Same session
                     break;
                 }
             }
@@ -306,17 +270,8 @@ static int check_can_delete_session(const http_request_t *request, const char *i
         return FAIL;
     }
 
-    // Non-admin: allow only if deleting own session AND the session token belongs to that session
-    int allowed = 0;
-    if (strcasecmp(req_username, owner) == 0) {
-        if (is_numeric_id) {
-            // For numeric ID deletion: must be deleting the same session that the token belongs to
-            allowed = (target_session_id == requesting_session_id) ? 1 : 0;
-        } else {
-            // For token deletion: always allowed since it's the same session
-            allowed = 1;
-        }
-    }
+    // Non-admin: allow only if deleting own session
+    int allowed = (strcasecmp(req_username, owner) == 0) ? 1 : 0;
     free(sessions);
 
     if (!allowed) {
@@ -338,7 +293,7 @@ static int check_can_delete_session(const http_request_t *request, const char *i
 
 // Returns SUCCESS if the caller has ConfigureUsers privilege (Administrator only).
 // On failure, populates response with 403 InsufficientPrivilege and returns FAIL.
-static int check_configure_admin_privilege(const http_request_t *request, http_response_t *response)
+static int check_configure_users_privilege(const http_request_t *request, http_response_t *response)
 {
     char req_username[128] = {0};
     char req_role[64] = {0};
@@ -376,7 +331,7 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
     char *resource_id = NULL;
     redfish_resource_type_t resource_type = parse_redfish_path(request->path, &resource_id);
     
-    // printf("DEBUG: resource_type = %d, resource_id = %s\n", resource_type, resource_id ? resource_id : "NULL");
+    printf("DEBUG: resource_type = %d, resource_id = %s\n", resource_type, resource_id ? resource_id : "NULL");
 
     // Enforce OData-Version: 4.0 for requests that include OData-Version
     for (int i = 0; i < request->header_count; i++) {
@@ -396,26 +351,26 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
         }
     }
 
+#if defined(CONFIG_REDFISH_TOKEN_VERIFY_ENABLE) && CONFIG_REDFISH_TOKEN_VERIFY_ENABLE
     // Public, unauthenticated endpoints (per Redfish spec):
     // - /redfish
     // - /redfish/v1
     // - /redfish/v1/odata
     // - /redfish/v1/$metadata
-    {
-        bool is_public_resource = (
-            resource_type == REDFISH_RESOURCE_VERSION ||
-            resource_type == REDFISH_RESOURCE_SERVICE_ROOT ||
-            resource_type == REDFISH_RESOURCE_ODATA_SERVICE ||
-            resource_type == REDFISH_RESOURCE_ODATA_METADATA
-        );
+    bool is_public_resource = (
+        resource_type == REDFISH_RESOURCE_VERSION ||
+        resource_type == REDFISH_RESOURCE_SERVICE_ROOT ||
+        resource_type == REDFISH_RESOURCE_ODATA_SERVICE ||
+        resource_type == REDFISH_RESOURCE_ODATA_METADATA
+    );
 
-        if (!is_public_resource) {
-            if (check_client_token(request) != SUCCESS) {
-                error(tag, "token check failed");
-                return handle_token_invalid(response);
-            }
+    if (!is_public_resource) {
+        if (check_client_token(request) != SUCCESS) {
+            error(tag, "token check failed");
+            return handle_token_invalid(response);
         }
     }
+#endif
 
     // Handle different HTTP methods
     if (strcmp(request->method, HTTP_METHOD_GET) == 0 || strcmp(request->method, HTTP_METHOD_HEAD) == 0) {
@@ -471,9 +426,6 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
                 break;
             case REDFISH_RESOURCE_ACCOUNTSERVICE:
                 handler_result = handle_account_service(response);
-                break;
-            case REDFISH_RESOURCE_ACCOUNTSERVICE_PRIVILEGEMAP:
-                handler_result = handle_account_service_privilege_map(response);
                 break;
 
             case REDFISH_RESOURCE_ACCOUNTSERVICE_ACCOUNTS:
@@ -766,7 +718,6 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
         int handler_result = SUCCESS;
         switch (resource_type) {
             case REDFISH_RESOURCE_MANAGER_SECURITY_POLICY:
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
                 handler_result = post_manager_security_policy(resource_id, request, response);
                 break;
             case REDFISH_RESOURCE_SESSIONSERVICE_SESSIONS_MEMBERS:
@@ -781,35 +732,26 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
                 if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 handler_result = handle_system_create(request, response);
                 break;
-            // case REDFISH_RESOURCE_MANAGERS_COLLECTION:
-            //     if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
-            //     handler_result = handle_manager_create(request, response);
-            //     break;
-            // case REDFISH_RESOURCE_ACCOUNTSERVICE:
-                // handler_result = handle_accounts();
-                // break;
-            case REDFISH_RESOURCE_ACCOUNTSERVICE_ACCOUNTS:
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
-                handler_result = handle_accounts_create(request, response);
+            case REDFISH_RESOURCE_MANAGERS_COLLECTION:
+                handler_result = handle_manager_create(request, response);
                 break;
-            
-            case REDFISH_RESOURCE_SESSIONSERVICE_SESSIONS:
-                handler_result = handle_sessions(request, response);
-                break;
-
             case REDFISH_RESOURCE_THERMALEQUIPMENT_COLLECTION:
                 if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 handler_result = handle_thermalequipment_create(request, response);
                 break;
-                
-            case REDFISH_RESOURCE_CDU_OEM_KENMEC_CONFIG_WRITE:
-                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
-                handler_result = handle_cdu_oem_kenmec_config_write(resource_id, request, response);
+            case REDFISH_RESOURCE_SESSIONSERVICE_SESSIONS:
+                handler_result = handle_sessions(request, response);
                 break;
 
-            // case REDFISH_RESOURCE_CDU_OEM_LOG_FILE:
-            //     handler_result = handle_cdu_oem_log_file_get(resource_id, request, response);
-            //     break;
+            case REDFISH_RESOURCE_ACCOUNTSERVICE:
+                handler_result = handle_accounts();
+                break;
+            case REDFISH_RESOURCE_ACCOUNTSERVICE_ACCOUNTS:
+                if (check_configure_users_privilege(request, response) != SUCCESS) return SUCCESS;
+                handler_result = handle_accounts_create(request, response);
+                break;            
+            case REDFISH_RESOURCE_CDU_OEM_KENMEC_CONFIG_WRITE:
+                return handle_cdu_oem_kenmec_config_write(resource_id, request, response);
 
             case REDFISH_RESOURCE_CDU_OEM_IOBOARD_ACTION_WRITE: {
                 if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
@@ -833,53 +775,27 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
             }
 
             case REDFISH_RESOURCE_MANAGER_RESET_ACTION: {
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
+                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 handler_result = handle_manager_reset_action(resource_id, request, response);
                 break;
             }
 
             case REDFISH_RESOURCE_CERTIFICATESERVICE_GENERATE_CSR: {
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
+                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 handler_result = handle_certificate_service_generate_csr(request, response);
                 break;
             }
             case REDFISH_RESOURCE_CERTIFICATESERVICE_REPLACE_CERTIFICATE: {
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
+                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 handler_result = handle_certificate_service_replace_certificate(request, response);
                 break;
             }
 
             case REDFISH_RESOURCE_UPDATESERVICE_MULTIPART:
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
                 handler_result = handle_update_service_multipart_upload(request, response);
                 break;
 
-            case REDFISH_RESOURCE_CDU_OEM_IOBOARD_OTA: {
-                // debug(tag, "request->path: %s", request->path);
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
-                const char *anchor = "/Oem/Kenmec/IOBoards/";
-                const char *pos = strstr(request->path, anchor);
-                const char *member = NULL;
-                if (pos) {
-                    pos += strlen(anchor);
-                    const char *slash = strchr(pos, '/');
-                    if (slash) {
-                        static char member_id[16];
-                        size_t n = (size_t)(slash - pos);
-                        if (n >= sizeof(member_id)) n = sizeof(member_id) - 1;
-                        strncpy(member_id, pos, n);
-                        member_id[n] = '\0';
-                        member = member_id;
-                    }
-                }
-                // debug(tag, "member: %s", member);
-                // debug(tag, "resource_id: %s", resource_id);
-                handler_result = handle_cdu_oem_ioboard_ota(resource_id, member, request, response);
-                break;
-            }
-
             case REDFISH_RESOURCE_CDU_OEM_CONTROL_LOGICS_ACTION_WRITE: {
-                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 const char *anchor = "/Oem/Kenmec/ControlLogics/";
                 const char *pos = strstr(request->path, anchor);
                 const char *member = NULL;
@@ -895,8 +811,7 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
                         member = member_id;
                     }
                 }
-                handler_result = handle_cdu_oem_control_logics_action_write(resource_id, member, request, response);
-                break;
+                return handle_cdu_oem_control_logics_action_write(resource_id, member, request, response);
             }
 
             default:
@@ -932,7 +847,6 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
                 return handle_system_update(resource_id, request, response);
 
             case REDFISH_RESOURCE_MANAGER:
-                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 return handle_manager_update(resource_id, request, response);
 
             case REDFISH_RESOURCE_THERMALEQUIPMENT:
@@ -956,9 +870,7 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
         // Handle DELETE requests (remove resources)
         switch (resource_type) {
             case REDFISH_RESOURCE_MANAGER_SECURITY_POLICY:
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
                 return delete_manager_security_policy(resource_id, response);
-                
             case REDFISH_RESOURCE_CHASSIS:
                 if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 return handle_chassis_delete(resource_id, response);
@@ -968,7 +880,6 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
                 return handle_system_delete(resource_id, response);
 
             case REDFISH_RESOURCE_MANAGER:
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
                 return handle_manager_delete(resource_id, response);
 
             case REDFISH_RESOURCE_THERMALEQUIPMENT:
@@ -976,7 +887,7 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
                 return handle_thermalequipment_delete(resource_id, response);
 
             case REDFISH_RESOURCE_ACCOUNTSERVICE_ACCOUNT:
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
+                if (check_configure_users_privilege(request, response) != SUCCESS) return SUCCESS;
                 return handle_account_delete(resource_id, response);
 
             case REDFISH_RESOURCE_SESSIONSERVICE_SESSIONS: {
@@ -1047,14 +958,11 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
         // Handle PATCH requests (update resources)
         switch (resource_type) {
             case REDFISH_RESOURCE_MANAGER_SECURITY_POLICY:
-                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 return patch_manager_security_policy(resource_id, request, response);
             case REDFISH_RESOURCE_MANAGERS_ETHERNET_INTERFACE_ETH0 :
-                if (check_configure_components_privilege(request, response) != SUCCESS) return SUCCESS;
                 return patch_managers_ethernet_interface_eth0(resource_id, request, response); 
             
             case REDFISH_RESOURCE_ACCOUNTSERVICE_ACCOUNT:
-                if (check_configure_admin_privilege(request, response) != SUCCESS) return SUCCESS;
                 return handle_account_patch(resource_id, request, response);
             
             default:
@@ -1070,7 +978,25 @@ int process_redfish_request(const http_request_t *request, http_response_t *resp
                 add_cors_headers(response);
                 return SUCCESS;
         }
-
+        
+        
+    } else if (strcmp(request->method, HTTP_METHOD_POST) == 0) {
+        // Handle POST for multipart upload endpoint
+        if (strcmp(request->path, "/redfish/v1/UpdateService/MultipartUpload") == 0 ||
+            strcmp(request->path, "/UpdateFirmwareMultipart") == 0) {
+            return handle_update_service_multipart_upload(request, response);
+        }
+        // Fallback: method not allowed
+        response->status_code = HTTP_METHOD_NOT_ALLOWED;
+        strcpy(response->body, "{\"error\":\"POST not allowed on this resource\"}");
+        response->content_length = strlen(response->body);
+        if (response->header_count < MAX_HEADERS) {
+            strcpy(response->headers[response->header_count][0], "Allow");
+            strcpy(response->headers[response->header_count][1], "GET, HEAD");
+            response->header_count++;
+        }
+        add_cors_headers(response);
+        return SUCCESS;
     } else {
         // Method not allowed
         response->status_code = HTTP_METHOD_NOT_ALLOWED;
@@ -1314,9 +1240,6 @@ redfish_resource_type_t parse_redfish_path(const char *path, char **resource_id)
         if (strlen(path) == 25) {
             return REDFISH_RESOURCE_ACCOUNTSERVICE;
         }
-        if (path[25] == '/' && strncmp(&path[26], "PrivilegeMap", 12) == 0 && strlen(path) == 38) {
-            return REDFISH_RESOURCE_ACCOUNTSERVICE_PRIVILEGEMAP;
-        }
         if (path[25] == '/' && strncmp(&path[26], "Accounts", 8) == 0) {
             if (strlen(path) == 34) {
                 // Collection: /redfish/v1/AccountService/Accounts
@@ -1405,32 +1328,6 @@ redfish_resource_type_t parse_redfish_path(const char *path, char **resource_id)
                             if (m == rest && t && t[strlen(tail)] == '\0' && m < t) {
                                 *resource_id = cdu_id;
                                 return REDFISH_RESOURCE_CDU_OEM_IOBOARD_ACTION_WRITE;
-                            }
-                        }
-                    }
-                }
-            }
-
-            // Check IOBoard OTA path EARLY: /redfish/v1/ThermalEquipment/CDUs/{cdu}/Oem/Kenmec/IOBoards/{member}/OTA
-            {
-                const char *base = path;
-                const char *prefix = "redfish/v1/ThermalEquipment/CDUs/";
-                if (strncmp(base, prefix, strlen(prefix)) == 0) {
-                    const char *p = base + strlen(prefix);
-                    const char *slash = strchr(p, '/');
-                    if (slash) {
-                        size_t id_len = (size_t)(slash - p);
-                        if (id_len > 0 && id_len < 32) {
-                            static char cdu_id[32];
-                            strncpy(cdu_id, p, id_len); cdu_id[id_len] = '\0';
-                            const char *rest = slash;
-                            const char *mid = "/Oem/Kenmec/IOBoards/";
-                            const char *tail = "/OTA";
-                            const char *m = strstr(rest, mid);
-                            const char *t = strstr(rest, tail);
-                            if (m == rest && t && t[strlen(tail)] == '\0' && m < t) {
-                                *resource_id = cdu_id;
-                                return REDFISH_RESOURCE_CDU_OEM_IOBOARD_OTA;
                             }
                         }
                     }
@@ -1628,29 +1525,6 @@ redfish_resource_type_t parse_redfish_path(const char *path, char **resource_id)
                     }
                 }
             }            
-
-            // Check path: /redfish/v1/ThermalEquipment/CDUs/{id}/Oem/Kenmec/LogFile
-            // {
-            //     const char *anchor = "/Oem/Kenmec/LogFile";
-            //     char *p = strstr((char*)path + 28, anchor);
-            //     if (p && p[strlen(anchor)] == '\0') {
-            //         // Extract CDU ID
-            //         char *cdu_path = (char*)(path + 28);
-            //         if (strncmp(cdu_path, "CDUs/", 5) == 0) {
-            //             static char cdu_id[32];
-            //             char *slash_pos = strchr(cdu_path + 5, '/');
-            //             if (slash_pos) {
-            //                 size_t len = slash_pos - (cdu_path + 5);
-            //                 if (len < sizeof(cdu_id)) {
-            //                     strncpy(cdu_id, cdu_path + 5, len);
-            //                     cdu_id[len] = '\0';
-            //                     *resource_id = cdu_id;
-            //                     return REDFISH_RESOURCE_CDU_OEM_LOG_FILE;
-            //                 }
-            //             }
-            //         }
-            //     }
-            // }
 
             // Check exact Kenmec OEM container path: /redfish/v1/ThermalEquipment/CDUs/{id}/Oem/Kenmec
             {
@@ -1860,75 +1734,7 @@ void http_server_cleanup(void) {
     }
 }
 
-// Local function for HTTP socket reading with timeout
-static int http_socket_read(int socket_fd, char *buffer, size_t buffer_size, int32_t timeout_ms) {
-    if (socket_fd < 0 || !buffer || buffer_size == 0) {
-        return ERROR_INVALID_PARAM;
-    }
-
-    int32_t byte_recv_total = 0;
-    int32_t byte_recv = 0;
-    int so_error;
-    socklen_t errlen = sizeof(so_error);
-    uint64_t enter_time = time_get_current_ms();
-
-    do {
-        // Set socket timeout
-        struct timeval timeout;
-        timeout.tv_sec  = timeout_ms / 1000;
-        timeout.tv_usec = (timeout_ms % 1000) * 1000;
-        setsockopt(socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(struct timeval));
-
-        // Calculate remaining buffer space and adjust pointer
-        void *current_buffer = (void *)((char *)buffer + byte_recv_total);
-        size_t remaining_size = buffer_size - byte_recv_total;
-        
-        byte_recv = recv(socket_fd, current_buffer, remaining_size, 0);
-        
-        // Check socket error status
-        getsockopt(socket_fd, SOL_SOCKET, SO_ERROR, &so_error, &errlen);
-        if (so_error && so_error != EAGAIN) {
-            return ERROR_NETWORK;
-        }
-
-        if (byte_recv > 0) {
-            byte_recv_total += byte_recv;
-        }
-        else if (byte_recv < 0) {
-            if (errno == ECONNRESET || errno == ECONNABORTED) {
-                if (byte_recv_total == 0) {
-                    byte_recv_total = ERROR_NETWORK;
-                }
-                break;
-            }
-            else if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                // Continue trying until timeout
-                continue;
-            }
-            else {
-                error(tag, "HTTP socket read error: %s", strerror(errno));
-                byte_recv_total = ERROR_NETWORK;
-                break;
-            }
-        }
-        else if (byte_recv == 0) {
-            // Connection closed by peer
-            break;
-        }
-        
-    } while ((byte_recv_total < (int32_t)buffer_size) && !time_after(enter_time + timeout_ms, time_get_current_ms()));
-
-    // Ensure safe null termination for callers that expect C-strings.
-    // If the buffer was completely filled, we can't place a terminator without
-    // overwriting data; callers should rely on the returned length in that case.
-    if (byte_recv_total >= 0 && byte_recv_total < (int32_t)buffer_size) {
-        buffer[byte_recv_total] = '\0';
-    }
-
-    return byte_recv_total;
-}
-
-int handle_http_client_connection_direct(int client_fd) {
+int handle_http_client_connection(int client_fd) {
     char request_buffer[BUFFER_SIZE];
     char response_buffer[BUFFER_SIZE];
     http_request_t request;
@@ -1937,18 +1743,18 @@ int handle_http_client_connection_direct(int client_fd) {
     // Initialize buffers to zero
     memset(request_buffer, 0, sizeof(request_buffer));
     memset(response_buffer, 0, sizeof(response_buffer));
-
-#if DEBUG_REDISH_SERVER
+    
     debug(tag, "Handling HTTP client connection on fd %d", client_fd);
-#endif
 
-    // Read request from client (5 second timeout)
-    int bytes_read = http_socket_read(client_fd, request_buffer, sizeof(request_buffer) - 1, 5000);
+    // Read request from client
+    int bytes_read = recv(client_fd, request_buffer, sizeof(request_buffer) - 1, 0);
     if (bytes_read <= 0) {
         error(tag, "Failed to read HTTP request from client");
         close(client_fd);
         return ERROR_NETWORK;
     }
+    
+    request_buffer[bytes_read] = '\0';
 
     // debug(tag, "Received HTTP request:\n%s\n", request_buffer);
 
@@ -1970,9 +1776,7 @@ int handle_http_client_connection_direct(int client_fd) {
     }
     // Stream large multipart uploads to a temp file
     int is_upload = 0;
-    if (strcmp(request.method, HTTP_METHOD_POST) == 0 && 
-        (strstr(request.path, "/UpdateFirmwareMultipart") != NULL || 
-         (strstr(request.path, "/Oem/Kenmec/IOBoards/") != NULL && strstr(request.path, "/OTA") != NULL))) {
+    if (strcmp(request.method, HTTP_METHOD_POST) == 0 && strstr(request.path, "/UpdateFirmwareMultipart") != NULL) {
         is_upload = 1;
     }
 
@@ -1989,7 +1793,7 @@ int handle_http_client_connection_direct(int client_fd) {
             int remaining = expected_len - request.content_length;
             int offset = request.content_length;
             while (remaining > 0) {
-                int n = http_socket_read(client_fd, request.body + offset, remaining, 5000);
+                int n = recv(client_fd, request.body + offset, remaining, 0);
                 if (n <= 0) {
                     printf("Failed to read remaining HTTP body bytes\n");
                     close(client_fd);
@@ -2002,12 +1806,8 @@ int handle_http_client_connection_direct(int client_fd) {
             request.content_length = expected_len;
         }
     } else {
-        // Create appropriate temp file for upload
-        if (strstr(request.path, "/Oem/Kenmec/IOBoards/") != NULL && strstr(request.path, "/OTA") != NULL) {
-            strcpy(request.upload_tmp_path, "/tmp/upload.bin");
-        } else {
-            system_firmware_file_path(request.upload_tmp_path);
-        }
+        // Create fixed temp file for firmware upload
+        system_firmware_file_path(request.upload_tmp_path);
 
         int tmp_fd = open(request.upload_tmp_path, O_CREAT | O_TRUNC | O_WRONLY, 0600);
         if (tmp_fd < 0) {
@@ -2015,7 +1815,6 @@ int handle_http_client_connection_direct(int client_fd) {
             close(client_fd);
             return ERROR_NETWORK;
         }
-        int last_percent = -1;
         // Write buffered bytes
         if (request.content_length > 0) {
             if (write(tmp_fd, request.body, (size_t)request.content_length) != request.content_length) {
@@ -2024,21 +1823,12 @@ int handle_http_client_connection_direct(int client_fd) {
                 close(client_fd);
                 return ERROR_NETWORK;
             }
-            // Print initial progress (only on new whole percent)
-            if (expected_len > 0) {
-                int received_total = request.content_length;
-                int percent = (int)((long long)received_total * 100 / expected_len);
-                if (percent > last_percent) {
-                    last_percent = percent;
-                    printf("Receiving upload: %d/%d bytes (%d%%)\n", received_total, expected_len, percent);
-                }
-            }
         }
         int remaining = expected_len - request.content_length;
         char chunk[8192];
         while (remaining > 0) {
             int to_read = remaining > (int)sizeof(chunk) ? (int)sizeof(chunk) : remaining;
-            int n = http_socket_read(client_fd, chunk, to_read, 5000);
+            int n = recv(client_fd, chunk, to_read, 0);
             if (n <= 0) {
                 if (errno == EAGAIN || errno == EWOULDBLOCK) {
                     printf("recv timeout while reading upload bytes\n");
@@ -2056,21 +1846,11 @@ int handle_http_client_connection_direct(int client_fd) {
                 return ERROR_NETWORK;
             }
             remaining -= n;
-            // Print incremental progress (only on new whole percent)
-            if (expected_len > 0) {
-                int received_total = expected_len - remaining;
-                int percent = (int)((long long)received_total * 100 / expected_len);
-                if (percent > last_percent) {
-                    last_percent = percent;
-                    printf("Receiving upload: %d/%d bytes (%d%%)\n", received_total, expected_len, percent);
-                }
-            }
         }
         fsync(tmp_fd);
         close(tmp_fd);
     }
 
-#if DEBUG_REDISH_SERVER
     debug(tag, "************");
     debug(tag, "Method: %s", request.method);
     debug(tag, "Path: %s", request.path);
@@ -2079,7 +1859,6 @@ int handle_http_client_connection_direct(int client_fd) {
     }
     debug(tag, "Body: %s", request.body);
     debug(tag, "************");
-#endif
 
     // Process Redfish request
     ret = process_redfish_request(&request, &response);
@@ -2092,9 +1871,7 @@ int handle_http_client_connection_direct(int client_fd) {
     // Generate HTTP response
     generate_http_response(&response, response_buffer, sizeof(response_buffer));
 
-#if DEBUG_REDISH_SERVER
     debug(tag, "Sending HTTP response:\n%s\n", response_buffer);
-#endif
 
     // Send response to client
     // Send response to client with proper size handling
@@ -2120,9 +1897,7 @@ int handle_http_client_connection_direct(int client_fd) {
     //     return ERROR_NETWORK;
     // } 
 
-#if DEBUG_REDISH_SERVER
     debug(tag, "Successfully sent %zu bytes to client", total_sent);
-#endif
 
     // Close client connection
     close(client_fd);
@@ -2152,129 +1927,10 @@ void https_server_cleanup(void) {
     debug(tag, "HTTPS server cleanup completed");
 }
 
-// Thread data structure to pass client file descriptor to thread
-typedef struct {
-    int client_fd;
-} client_thread_data_t;
-
-// Thread wrapper function for handle_client_connection (HTTPS)
-void* client_connection_thread(void* arg) {
-    if (!arg) {
-        debug(tag, "Error: NULL argument passed to client thread");
-        return NULL;
-    }
-    
-    client_thread_data_t* thread_data = (client_thread_data_t*)arg;
-    int client_fd = thread_data->client_fd;
-    
-    debug(tag, "Starting HTTPS client connection thread for fd %d", client_fd);
-    
-    // Call the actual connection handler
-    int result = handle_client_connection(client_fd);
-    
-    // Close the client socket
-    close(client_fd);
-    
-    // Free the thread data
-    free(thread_data);
-    
-    debug(tag, "HTTPS client connection thread completed for fd %d with result %d", client_fd, result);
-    
-    return NULL;
-}
-
-// Thread wrapper function for HTTP client connections
-void* http_client_connection_thread(void* arg) {
-    if (!arg) {
-        debug(tag, "Error: NULL argument passed to HTTP client thread");
-        return NULL;
-    }
-    
-    client_thread_data_t* thread_data = (client_thread_data_t*)arg;
-    int client_fd = thread_data->client_fd;
-    
-#if DEBUG_REDISH_SERVER
-    debug(tag, "Starting HTTP client connection thread for fd %d", client_fd);
-#endif
-    
-    // Process the HTTP client connection directly
-    // Note: handle_http_client_connection already closes the socket, so we don't close it here
-#if DEBUG_REDISH_SERVER
-    int result = handle_http_client_connection_direct(client_fd);
-#else
-    handle_http_client_connection_direct(client_fd);
-#endif
-    
-    // Free the thread data
-    free(thread_data);
-    
-#if DEBUG_REDISH_SERVER
-    debug(tag, "HTTP client connection thread completed for fd %d with result %d", client_fd, result);
-#endif
-    
-    return NULL;
-}
-
 int handle_https_client_connection(int client_fd) {
-    // Allocate thread data structure
-    client_thread_data_t* thread_data = malloc(sizeof(client_thread_data_t));
-    if (!thread_data) {
-        debug(tag, "Error: Failed to allocate memory for thread data");
-        close(client_fd);
-        return ERROR_MEMORY;
-    }
-    
-    thread_data->client_fd = client_fd;
-    
-    // Create thread to handle the client connection
-    pthread_t client_thread;
-    int thread_result = pthread_create(&client_thread, NULL, client_connection_thread, thread_data);
-    
-    if (thread_result != 0) {
-        debug(tag, "Error: Failed to create client thread, error code: %d", thread_result);
-        free(thread_data);
-        close(client_fd);
-        return ERROR_GENERAL;
-    }
-    
-    // Detach the thread so it can clean up itself when done
-    pthread_detach(client_thread);
-    
-    debug(tag, "Successfully created thread for client connection on fd %d", client_fd);
-    
-    return SUCCESS;
-}
-
-int handle_http_client_connection(int client_fd) {
-    // Allocate thread data structure
-    client_thread_data_t* thread_data = malloc(sizeof(client_thread_data_t));
-    if (!thread_data) {
-        debug(tag, "Error: Failed to allocate memory for HTTP thread data");
-        close(client_fd);
-        return ERROR_MEMORY;
-    }
-    
-    thread_data->client_fd = client_fd;
-    
-    // Create thread to handle the HTTP client connection
-    pthread_t client_thread;
-    int thread_result = pthread_create(&client_thread, NULL, http_client_connection_thread, thread_data);
-    
-    if (thread_result != 0) {
-        debug(tag, "Error: Failed to create HTTP client thread, error code: %d", thread_result);
-        free(thread_data);
-        close(client_fd);
-        return ERROR_GENERAL;
-    }
-    
-    // Detach the thread so it can clean up itself when done
-    pthread_detach(client_thread);
-
-#if DEBUG_REDISH_SERVER
-    debug(tag, "Successfully created thread for HTTP client connection on fd %d", client_fd);
-#endif
-    
-    return SUCCESS;
+    // This function will handle HTTPS connections using the existing TLS implementation
+    // For now, it will call the existing handle_client_connection function
+    return handle_client_connection(client_fd);
 }
 
 int redfish_server_post_action(label_post_action_t action, const char *context) {
@@ -2294,12 +1950,6 @@ int redfish_server_post_action(label_post_action_t action, const char *context) 
             printf("[%s] Executing force restart for context: %s\n", __FUNCTION__, context);
             system_reset();
             printf("[%s] Force restart initiated for %s\n", __FUNCTION__, context);
-            break;
-
-        case LABEL_POST_ACTION_FIRMWARE_UPDATE:
-            printf("[%s] Executing firmware update for context: %s\n", __FUNCTION__, context);
-            system_firmware_update();
-            printf("[%s] Firmware update initiated for %s\n", __FUNCTION__, context);
             break;
 
         default:

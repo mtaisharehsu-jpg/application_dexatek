@@ -1196,3 +1196,117 @@ int control_hardware_init(int machine_type)
 
     return ret;
 }
+
+// ========== v021 新增函式 ==========
+
+int control_hardware_version_get(uint8_t hid_pid, uint8_t hid_port, uint16_t version[3], uint16_t timeout_ms)
+{
+    int ret = SUCCESS;
+
+    uint16_t address = DK_MODBUS_VERSION_MAJOR;
+
+    version[0] = 0;
+    version[1] = 0;
+    version[2] = 0;
+
+    ret = CModbusVersionGet(hid_pid, hid_port, address, 3, version, timeout_ms);
+
+    return ret;
+}
+
+int control_hardware_enter_dfu_mode(uint8_t hid_pid, uint8_t hid_port, uint16_t timeout_ms)
+{
+    return CModbusEnterDFUMode(hid_pid, hid_port, timeout_ms);
+}
+
+int control_hardware_analog_output_voltage_get_from_ram(uint8_t hid_port, uint8_t channel, int32_t *mV)
+{
+    int ret = SUCCESS;
+
+    *mV = 0;
+
+    uint16_t address =  0;
+
+    // channel to analog input address
+    switch (channel) {
+        case 0:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_A_VOLTAGE_OUTPUT;
+            break;
+        case 1:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_B_VOLTAGE_OUTPUT;
+            break;
+        case 2:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_C_VOLTAGE_OUTPUT;
+            break;
+        case 3:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_D_VOLTAGE_OUTPUT;
+            break;
+        default:
+            error(tag, "invalid channel: %d", channel);
+            ret = FAIL;
+            break;
+    }
+
+    // get current from ram
+    if (ret == SUCCESS) {
+        modbus_mapping_t *mapping = modbus_manager_data_mapping_get();
+        if (mapping != NULL) {
+            AppConvertUint32_16 conv;
+            conv.words.u16_byte[0] = mapping->tab_registers[address];
+            conv.words.u16_byte[1] = mapping->tab_registers[address+1];
+            *mV = conv.val;
+        } else {
+            ret = FAIL;
+        }
+    } else {
+        error(tag, "get current from ram failed");
+    }
+
+    return ret;
+}
+
+int control_hardware_analog_output_current_get_from_ram(uint8_t hid_port, uint8_t channel, int32_t *mA)
+{
+    int ret = SUCCESS;
+
+    *mA = 0;
+
+    uint16_t address =  0;
+
+    // channel to analog input address
+    switch (channel) {
+        case 0:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_A_CURRENT_OUTPUT;
+            break;
+        case 1:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_B_CURRENT_OUTPUT;
+            break;
+        case 2:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_C_CURRENT_OUTPUT;
+            break;
+        case 3:
+            address = HID_BASE_ADDRESS + (hid_port * HID_IO_BOARD_BASE_ADDRESS) + MODBUS_ADDRESS_AD74416H_CH_D_CURRENT_OUTPUT;
+            break;
+        default:
+            error(tag, "invalid channel: %d", channel);
+            ret = FAIL;
+            break;
+    }
+
+    // get current from ram
+    if (ret == SUCCESS) {
+        modbus_mapping_t *mapping = modbus_manager_data_mapping_get();
+        if (mapping != NULL) {
+            AppConvertUint32_16 conv;
+            conv.words.u16_byte[0] = mapping->tab_registers[address];
+            conv.words.u16_byte[1] = mapping->tab_registers[address+1];
+            *mA = conv.val;
+        } else {
+            ret = FAIL;
+        }
+    } else {
+        error(tag, "get current from ram failed");
+    }
+
+    return ret;
+}

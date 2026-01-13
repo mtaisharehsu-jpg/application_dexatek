@@ -290,4 +290,32 @@ int control_logic_analog_output_current_configs_set(const char *json_string);
  */
 analog_config_t* control_logic_analog_output_current_configs_get(int *config_count);
 
+// ========== v021 新增函式宣告 ==========
+
+/**
+ * @brief 取得機型名稱
+ *
+ * 根據目前系統配置的機器類型，返回對應的機型名稱字串。
+ * 支援的機型: LS80、LX1400、LS300D
+ *
+ * @return 機型名稱字串指標 (不可修改)
+ *         - "LS80" - LS80 機型
+ *         - "LX1400" - LX1400 機型
+ *         - "LS300D" - LS300D 機型
+ *         - 預設返回 "LS80"
+ */
+const char* control_logic_config_get_model_name(void);
+
+/**
+ * @brief 取得產品序列號
+ *
+ * 從 Modbus 暫存器讀取產品序列號。序列號由 8 個 uint16 暫存器組成,
+ * 並轉換為以 null 結尾的字串。
+ *
+ * @return 產品序列號字串指標 (不可修改)
+ * @note 返回的字串由內部靜態緩衝區維護，呼叫者不應釋放或修改
+ * @note 如果讀取失敗，返回的字串可能為空或包含無效資料
+ */
+const char* control_logic_config_get_product_sn(void);
+
 #endif /* CONTROL_LOGIC_MANAGER_H */ 

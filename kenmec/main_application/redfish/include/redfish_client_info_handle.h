@@ -9,7 +9,7 @@
 #define MAX_PASSWORD_LENGTH 128
 #define MAX_ROLE_LENGTH 64
 
-#define SESSION_EXPIRY_SECONDS 300
+#define SESSION_EXPIRY_SECONDS 3600
 
 typedef enum {
     DB_STATUS_OPEN_ERROR            = -1,
