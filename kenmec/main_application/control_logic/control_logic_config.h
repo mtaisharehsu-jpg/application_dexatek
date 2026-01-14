@@ -77,8 +77,9 @@ typedef struct {
 typedef struct {
     uint8_t port;               /* USB/HID 埠號索引 */
     uint8_t channel;            /* 通道號（0-3） */
-    uint8_t sensor_type;        /* 感測器類型（例如：4-20mA, 0-10V） */
+    uint8_t sensor_type;        /* 感測器類型（0=流量, 1=壓力） */
     int16_t update_address;     /* 本地 Modbus 映射中的目標基址 */
+    uint16_t max_range;         /* 最大量程值: 流量(LPM)或壓力(Bar) */
     char name[32];              /* 名稱（例如："AI1", "AO1"） */
 } analog_config_t;
 

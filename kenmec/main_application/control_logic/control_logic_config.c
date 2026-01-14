@@ -749,9 +749,10 @@ static int _analog_input_current_configs_load_from_string(const char *json_strin
         cJSON *channel = cJSON_GetObjectItemCaseSensitive(it, "channel");
         cJSON *sensor_type = cJSON_GetObjectItemCaseSensitive(it, "sensor_type");
         cJSON *update_address = cJSON_GetObjectItemCaseSensitive(it, "update_address");
+        cJSON *max_range = cJSON_GetObjectItemCaseSensitive(it, "max_range");
         cJSON *name = cJSON_GetObjectItemCaseSensitive(it, "name");
 
-        if (!cJSON_IsNumber(port) || !cJSON_IsNumber(channel) || !cJSON_IsNumber(sensor_type) || 
+        if (!cJSON_IsNumber(port) || !cJSON_IsNumber(channel) || !cJSON_IsNumber(sensor_type) ||
             !cJSON_IsNumber(update_address)) {
             error(tag, "Invalid analog current input config entry (missing numeric fields)");
             continue;
@@ -762,7 +763,16 @@ static int _analog_input_current_configs_load_from_string(const char *json_strin
         c.channel = (uint8_t)channel->valueint;
         c.sensor_type = (uint8_t)sensor_type->valueint;
         c.update_address = (uint16_t)update_address->valueint;
-        
+
+        // 根據感測器類型設定預設量程
+        uint16_t default_range = 0;
+        if (c.sensor_type == 0) {
+            default_range = 100;  // 流量感測器預設 100 LPM
+        } else if (c.sensor_type == 1) {
+            default_range = 10;   // 壓力感測器預設 10 Bar
+        }
+        c.max_range = (max_range && cJSON_IsNumber(max_range)) ? (uint16_t)max_range->valueint : default_range;
+
         // copy name
         if (name != NULL && name->valuestring != NULL) {
             strncpy(c.name, name->valuestring, sizeof(c.name)-1);
