@@ -1,7 +1,7 @@
-prefix=/home/kellen/work/projects/kenmec/augentix-platform-application/application_dexatek/library/libmodbus
+prefix=/home/stephen/dk-ipc/SDK_Kenmec_CDU/kenmec_hub_LA20_app_v1/kenmec_hub_LA20_app_v1.0.1.01/application_dexatek/library/libmodbus
 exec_prefix=${prefix}
-libdir=/home/kellen/work/projects/kenmec/augentix-platform-application/buildroot/output/target/usr/lib
-includedir=/home/kellen/work/projects/kenmec/augentix-platform-application/buildroot/output/host/usr/arm-buildroot-linux-gnueabihf/sysroot/usr/include
+libdir=/home/stephen/dk-ipc/SDK_Kenmec_CDU/buildroot/output/target/usr/lib
+includedir=/home/stephen/dk-ipc/SDK_Kenmec_CDU/buildroot/output/host/usr/arm-buildroot-linux-gnueabihf/sysroot/usr/include
 
 Name: modbus
 Description: Modbus library
