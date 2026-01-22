@@ -20,6 +20,7 @@
 #include "kenmec/main_application/control_logic/control_logic_register.h"
 #include "kenmec/main_application/control_logic/control_logic_common.h"
 #include "kenmec/main_application/control_logic/control_logic_config.h"
+#include "kenmec/main_application/control_logic/error_handler/error_handler.h"
 
 /*---------------------------------------------------------------------------
                             Defined Constants
@@ -136,5 +137,64 @@ int control_logic_manager_set_function_pointer(int machine_type);
  * @return 成功返回 0，失敗返回負值錯誤碼
  */
 int control_logic_manager_reinit(void);
+
+/*---------------------------------------------------------------------------
+                            Error Handler API
+ ---------------------------------------------------------------------------*/
+
+/**
+ * @brief 獲取錯誤碼活動數量
+ *
+ * @return 當前活動的錯誤碼數量
+ */
+uint32_t control_logic_manager_get_active_error_count(void);
+
+/**
+ * @brief 獲取錯誤碼狀態 JSON
+ *
+ * @param json_root 輸出的 JSON 物件
+ * @return 成功返回 0
+ */
+int control_logic_manager_get_errors_json(cJSON *json_root);
+
+/**
+ * @brief 獲取活動錯誤碼 JSON
+ *
+ * @param json_root 輸出的 JSON 物件
+ * @return 成功返回 0
+ */
+int control_logic_manager_get_active_errors_json(cJSON *json_root);
+
+/**
+ * @brief 確認錯誤碼
+ *
+ * @param error_code 錯誤碼 ID
+ * @return 成功返回 0
+ */
+int control_logic_manager_acknowledge_error(uint32_t error_code);
+
+/**
+ * @brief 確認所有活動錯誤碼
+ *
+ * @return 確認的錯誤數量
+ */
+int control_logic_manager_acknowledge_all_errors(void);
+
+/**
+ * @brief 重置錯誤碼
+ *
+ * @param error_code 錯誤碼 ID
+ * @return 成功返回 0
+ */
+int control_logic_manager_reset_error(uint32_t error_code);
+
+/**
+ * @brief 獲取錯誤歷史記錄 JSON
+ *
+ * @param count 要獲取的記錄數量
+ * @param json_root 輸出的 JSON 物件
+ * @return 成功返回 0
+ */
+int control_logic_manager_get_error_history_json(uint32_t count, cJSON *json_root);
 
 #endif /* CONTROL_LOGIC_MANAGER_H */ 

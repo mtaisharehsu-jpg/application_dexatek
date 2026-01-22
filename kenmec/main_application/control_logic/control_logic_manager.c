@@ -7,6 +7,9 @@
 #include "ls80/control_logic_ls80.h"
 #include "lx1400/control_logic_lx1400.h"
 #include "ls300d/control_logic_ls300d.h"
+#include "ls300d/control_logic_ls300d_error.h"
+#include "error_handler/error_handler.h"
+#include "error_handler/error_history.h"
 
 /**
  * @file control_logic_manager.c
@@ -265,7 +268,7 @@ int control_logic_manager_reinit(void)
 int control_logic_manager_init(void)
 {
 
-    debug(tag, "VVVV222111***********************888888");
+    debug(tag, "VVVV222111***********************999111");
 
     /* 檢查是否已經初始化 */
     if (_control_logic_manager_initialized) {
@@ -289,6 +292,24 @@ int control_logic_manager_init(void)
             CONTROL_LOGIC_ARRAY[i].init();
         }
     }
+
+    /* 初始化錯誤處理模組 */
+    debug(tag, "Initializing error handler...");
+    if (error_handler_init() != 0) {
+        error(tag, "Failed to initialize error handler");
+        return -1;
+    }
+
+    /* 根據機型初始化對應的錯誤碼 */
+    int machine_type = control_logic_config_get_machine_type();
+    if (machine_type == CONTROL_LOGIC_MACHINE_TYPE_LS300D) {
+        debug(tag, "Initializing LS300D error codes...");
+        if (control_logic_ls300d_error_init() != 0) {
+            error(tag, "Failed to initialize LS300D error codes");
+            /* 錯誤碼初始化失敗不影響主程式運行 */
+        }
+    }
+    /* TODO: 未來可在此處添加其他機型的錯誤碼初始化 */
 
     /* 設置初始化完成標誌 */
     _control_logic_manager_initialized = true;
@@ -383,6 +404,9 @@ void control_logic_manager_cleanup(void)
 
     debug(tag, "Cleaning up control logic...");
 
+    /* 清理錯誤處理模組 */
+    error_handler_cleanup();
+
     /* 清除初始化狀態標誌 */
     _control_logic_manager_initialized = false;
 
@@ -408,4 +432,73 @@ bool control_logic_manager_is_running(void)
  */
 int control_logic_manager_number_of_control_logics(void) {
     return sizeof(CONTROL_LOGIC_ARRAY) / sizeof(CONTROL_LOGIC_ARRAY[0]);
+}
+
+/*---------------------------------------------------------------------------
+                            Error Handler API Implementation
+ ---------------------------------------------------------------------------*/
+
+/**
+ * @brief 獲取錯誤碼活動數量
+ */
+uint32_t control_logic_manager_get_active_error_count(void)
+{
+    return error_handler_get_active_count();
+}
+
+/**
+ * @brief 獲取錯誤碼狀態 JSON
+ */
+int control_logic_manager_get_errors_json(cJSON *json_root)
+{
+    if (json_root == NULL) {
+        return -1;
+    }
+    return error_handler_to_json(json_root);
+}
+
+/**
+ * @brief 獲取活動錯誤碼 JSON
+ */
+int control_logic_manager_get_active_errors_json(cJSON *json_root)
+{
+    if (json_root == NULL) {
+        return -1;
+    }
+    return error_handler_active_to_json(json_root);
+}
+
+/**
+ * @brief 確認錯誤碼
+ */
+int control_logic_manager_acknowledge_error(uint32_t error_code)
+{
+    return error_handler_acknowledge(error_code);
+}
+
+/**
+ * @brief 確認所有活動錯誤碼
+ */
+int control_logic_manager_acknowledge_all_errors(void)
+{
+    return error_handler_acknowledge_all();
+}
+
+/**
+ * @brief 重置錯誤碼
+ */
+int control_logic_manager_reset_error(uint32_t error_code)
+{
+    return error_handler_reset(error_code);
+}
+
+/**
+ * @brief 獲取錯誤歷史記錄 JSON
+ */
+int control_logic_manager_get_error_history_json(uint32_t count, cJSON *json_root)
+{
+    if (json_root == NULL) {
+        return -1;
+    }
+    return error_history_get_recent(count, json_root);
 }

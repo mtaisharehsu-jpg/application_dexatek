@@ -94,9 +94,8 @@ static uint32_t REG_RESTORE_DEFAULT_PID_FLOW = 45902; // 恢復 PID 預設值 (�
 
 static uint32_t REG_PUMP1_SPEED = 45015;  // Pump1速度設定 (0-1000)
 static uint32_t REG_PUMP2_SPEED = 45016;  // Pump2速度設定
-
-static uint32_t REG_PUMP1_CONTROL = 411101;  // Pump1啟停控制
-static uint32_t REG_PUMP2_CONTROL = 411102;  // Pump2啟停控制
+static uint32_t REG_PUMP1_CONTROL = 411005;  // Pump1啟停控制
+static uint32_t REG_PUMP2_CONTROL = 411006;  // Pump2啟停控制
 
 static uint32_t REG_PUMP1_MANUAL_MODE = 45021;   // Pump1手動模式 (0=自動, 1=手動)
 static uint32_t REG_PUMP2_MANUAL_MODE = 45022;   // Pump2手動模式

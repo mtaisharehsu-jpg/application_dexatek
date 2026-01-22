@@ -50,17 +50,17 @@ static uint32_t REG_CONTROL_LOGIC_7_ENABLE = 41007; // 控制邏輯7啟用
 
 // DC泵浦控制寄存器 (只有2台泵浦)
 static uint32_t DC_PUMP1_SPEED_CMD_REG = 45015;   // DC泵1轉速設定
-static uint32_t DC_PUMP1_ENABLE_CMD_REG = 411001;   // DC泵1啟停控制
-static uint32_t DC_PUMP1_RESET_CMD_REG = 411108;   // DC泵1異常復歸
-static uint32_t DC_PUMP1_STATUS_REG = 411109;   // DC泵1過載狀態
+static uint32_t DC_PUMP1_ENABLE_CMD_REG = 411005;   // DC泵1啟停控制
+// static uint32_t DC_PUMP1_RESET_CMD_REG = 411108;   // DC泵1異常復歸
+// static uint32_t DC_PUMP1_STATUS_REG = 411109;   // DC泵1過載狀態
 static uint32_t DC_PUMP1_FREQ_FB_REG = 42501;    // DC泵1輸出頻率
 static uint32_t DC_PUMP1_CURRENT_FB_REG = 42553;    // DC泵1電流
 static uint32_t DC_PUMP1_VOLTAGE_FB_REG = 42552;    // DC泵1電壓
 
 static uint32_t DC_PUMP2_SPEED_CMD_REG = 45016;   // DC泵2轉速設定
-static uint32_t DC_PUMP2_ENABLE_CMD_REG = 411002;   // DC泵2啟停控制
-static uint32_t DC_PUMP2_RESET_CMD_REG = 411110;   // DC泵2異常復歸
-static uint32_t DC_PUMP2_STATUS_REG = 411111;   // DC泵2過載狀態
+static uint32_t DC_PUMP2_ENABLE_CMD_REG = 411006;   // DC泵2啟停控制
+// static uint32_t DC_PUMP2_RESET_CMD_REG = 411110;   // DC泵2異常復歸
+// static uint32_t DC_PUMP2_STATUS_REG = 411111;   // DC泵2過載狀態
 static uint32_t DC_PUMP2_FREQ_FB_REG = 42511;    // DC泵2輸出頻率
 static uint32_t DC_PUMP2_CURRENT_FB_REG = 42563;    // DC泵2電流
 static uint32_t DC_PUMP2_VOLTAGE_FB_REG = 42562;    // DC泵2電壓
@@ -179,15 +179,15 @@ static int _register_list_init(void)
     _control_logic_register_list[2].default_address = DC_PUMP1_ENABLE_CMD_REG;
     _control_logic_register_list[2].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[3].name = REG_PUMP1_RESET_CMD_STR;
-    _control_logic_register_list[3].address_ptr = &DC_PUMP1_RESET_CMD_REG;
-    _control_logic_register_list[3].default_address = DC_PUMP1_RESET_CMD_REG;
-    _control_logic_register_list[3].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    // _control_logic_register_list[3].name = REG_PUMP1_RESET_CMD_STR;
+    // _control_logic_register_list[3].address_ptr = &DC_PUMP1_RESET_CMD_REG;
+    // _control_logic_register_list[3].default_address = DC_PUMP1_RESET_CMD_REG;
+    // _control_logic_register_list[3].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[4].name = REG_PUMP1_FAULT_STR;
-    _control_logic_register_list[4].address_ptr = &DC_PUMP1_STATUS_REG;
-    _control_logic_register_list[4].default_address = DC_PUMP1_STATUS_REG;
-    _control_logic_register_list[4].type = CONTROL_LOGIC_REGISTER_READ;
+    // _control_logic_register_list[4].name = REG_PUMP1_FAULT_STR;
+    // _control_logic_register_list[4].address_ptr = &DC_PUMP1_STATUS_REG;
+    // _control_logic_register_list[4].default_address = DC_PUMP1_STATUS_REG;
+    // _control_logic_register_list[4].type = CONTROL_LOGIC_REGISTER_READ;
 
     _control_logic_register_list[5].name = REG_PUMP1_FREQ_STR;
     _control_logic_register_list[5].address_ptr = &DC_PUMP1_FREQ_FB_REG;
@@ -214,15 +214,15 @@ static int _register_list_init(void)
     _control_logic_register_list[9].default_address = DC_PUMP2_ENABLE_CMD_REG;
     _control_logic_register_list[9].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[10].name = REG_PUMP2_RESET_CMD_STR;
-    _control_logic_register_list[10].address_ptr = &DC_PUMP2_RESET_CMD_REG;
-    _control_logic_register_list[10].default_address = DC_PUMP2_RESET_CMD_REG;
-    _control_logic_register_list[10].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
+    // _control_logic_register_list[10].name = REG_PUMP2_RESET_CMD_STR;
+    // _control_logic_register_list[10].address_ptr = &DC_PUMP2_RESET_CMD_REG;
+    // _control_logic_register_list[10].default_address = DC_PUMP2_RESET_CMD_REG;
+    // _control_logic_register_list[10].type = CONTROL_LOGIC_REGISTER_READ_WRITE;
 
-    _control_logic_register_list[11].name = REG_PUMP2_FAULT_STR;
-    _control_logic_register_list[11].address_ptr = &DC_PUMP2_STATUS_REG;
-    _control_logic_register_list[11].default_address = DC_PUMP2_STATUS_REG;
-    _control_logic_register_list[11].type = CONTROL_LOGIC_REGISTER_READ;
+    // _control_logic_register_list[11].name = REG_PUMP2_FAULT_STR;
+    // _control_logic_register_list[11].address_ptr = &DC_PUMP2_STATUS_REG;
+    // _control_logic_register_list[11].default_address = DC_PUMP2_STATUS_REG;
+    // _control_logic_register_list[11].type = CONTROL_LOGIC_REGISTER_READ;
 
     _control_logic_register_list[12].name = REG_PUMP2_FREQ_STR;
     _control_logic_register_list[12].address_ptr = &DC_PUMP2_FREQ_FB_REG;
