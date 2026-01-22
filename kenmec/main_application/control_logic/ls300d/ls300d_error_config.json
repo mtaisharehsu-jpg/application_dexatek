@@ -1,0 +1,465 @@
+{
+  "version": "1.0",
+  "machine_type": "LS300D",
+  "description": "LS300D error code configuration - Based on LS300D_error_code_20260108.pdf",
+  "errors": [
+    {
+      "code": 3100,
+      "name": "P1_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 6.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3101,
+      "name": "P1_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto",
+      "note": "severity can be changed to major"
+    },
+    {
+      "code": 3102,
+      "name": "P1_LOW_WARNING",
+      "enabled": true,
+      "threshold": 0.0,
+      "hysteresis": 0.2,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto",
+      "note": "severity can be changed to major"
+    },
+    {
+      "code": 3103,
+      "name": "P1_LOW_ALERT",
+      "enabled": true,
+      "threshold": -0.3,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3120,
+      "name": "T1_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 80.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto",
+      "note": "CDU component temperature limit"
+    },
+    {
+      "code": 3121,
+      "name": "T1_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 45.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3122,
+      "name": "T1_LOW_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3123,
+      "name": "T1_LOW_ALERT",
+      "enabled": true,
+      "threshold": 2.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3200,
+      "name": "P3_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 6.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3201,
+      "name": "P3_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3202,
+      "name": "P3_LOW_WARNING",
+      "enabled": true,
+      "threshold": 0.0,
+      "hysteresis": 0.2,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3203,
+      "name": "P3_LOW_ALERT",
+      "enabled": true,
+      "threshold": -0.3,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3220,
+      "name": "T3_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 80.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3221,
+      "name": "T3_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 45.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3222,
+      "name": "T3_LOW_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3223,
+      "name": "T3_LOW_ALERT",
+      "enabled": true,
+      "threshold": 2.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3300,
+      "name": "P2_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 6.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3301,
+      "name": "P2_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3302,
+      "name": "P2_LOW_WARNING",
+      "enabled": true,
+      "threshold": 0.0,
+      "hysteresis": 0.2,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3303,
+      "name": "P2_LOW_ALERT",
+      "enabled": true,
+      "threshold": -0.3,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3320,
+      "name": "T2_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 80.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3321,
+      "name": "T2_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 45.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3322,
+      "name": "T2_LOW_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3323,
+      "name": "T2_LOW_ALERT",
+      "enabled": true,
+      "threshold": 2.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3402,
+      "name": "P5_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 6.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3403,
+      "name": "P5_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3404,
+      "name": "P5_LOW_WARNING",
+      "enabled": true,
+      "threshold": 0.0,
+      "hysteresis": 0.2,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3405,
+      "name": "P5_LOW_ALERT",
+      "enabled": true,
+      "threshold": -0.3,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3420,
+      "name": "LS5_LEVEL_LOW",
+      "enabled": true,
+      "threshold": 0,
+      "hysteresis": 0,
+      "delay_ms": 10000,
+      "severity": "critical",
+      "recovery": "auto",
+      "note": "LS5a and LS5b both triggered for 10 seconds, pump slows to 30%"
+    },
+    {
+      "code": 3600,
+      "name": "P4_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 6.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3601,
+      "name": "P4_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3602,
+      "name": "P4_LOW_WARNING",
+      "enabled": true,
+      "threshold": 0.0,
+      "hysteresis": 0.2,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3603,
+      "name": "P4_LOW_ALERT",
+      "enabled": true,
+      "threshold": -0.3,
+      "hysteresis": 0.3,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3622,
+      "name": "T4_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 55.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3623,
+      "name": "T4_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 50.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3624,
+      "name": "T4_LOW_WARNING",
+      "enabled": true,
+      "threshold": 5.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3625,
+      "name": "T4_LOW_ALERT",
+      "enabled": true,
+      "threshold": 2.0,
+      "hysteresis": 2.0,
+      "delay_ms": 60000,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3721,
+      "name": "DEWPOINT_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 25.0,
+      "hysteresis": 2.0,
+      "delay_ms": 0,
+      "severity": "critical",
+      "recovery": "auto"
+    },
+    {
+      "code": 3722,
+      "name": "DEWPOINT_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 20.0,
+      "hysteresis": 2.0,
+      "delay_ms": 0,
+      "severity": "major",
+      "recovery": "auto"
+    },
+    {
+      "code": 3723,
+      "name": "T0_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 45.0,
+      "hysteresis": 2.0,
+      "delay_ms": 120000,
+      "severity": "major",
+      "recovery": "auto",
+      "note": "ENV-REQ-01"
+    },
+    {
+      "code": 3724,
+      "name": "T0_HIGH_WARNING",
+      "enabled": true,
+      "threshold": 40.0,
+      "hysteresis": 2.0,
+      "delay_ms": 120000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3725,
+      "name": "T0_LOW_WARNING",
+      "enabled": true,
+      "threshold": 10.0,
+      "hysteresis": 2.0,
+      "delay_ms": 120000,
+      "severity": "minor",
+      "recovery": "auto"
+    },
+    {
+      "code": 3726,
+      "name": "T0_LOW_ALERT",
+      "enabled": true,
+      "threshold": 18.0,
+      "hysteresis": 2.0,
+      "delay_ms": 120000,
+      "severity": "major",
+      "recovery": "auto",
+      "note": "ENV-REQ-01"
+    },
+    {
+      "code": 3727,
+      "name": "RH_HIGH_ALERT",
+      "enabled": true,
+      "threshold": 80.0,
+      "hysteresis": 2.0,
+      "delay_ms": 120000,
+      "severity": "major",
+      "recovery": "auto",
+      "note": "ENV-REQ-02"
+    },
+    {
+      "code": 3730,
+      "name": "RH_LOW_ALERT",
+      "enabled": true,
+      "threshold": 8.0,
+      "hysteresis": 2.0,
+      "delay_ms": 120000,
+      "severity": "major",
+      "recovery": "auto",
+      "note": "ENV-REQ-02"
+    }
+  ]
+}
