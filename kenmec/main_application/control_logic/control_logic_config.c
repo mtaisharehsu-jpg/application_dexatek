@@ -76,6 +76,9 @@ static int _analog_output_current_configs_count = 0;
 /* 模擬量電流輸出配置陣列指標 */
 static analog_config_t *_analog_output_current_configs = NULL;
 
+/* v021 新增: 產品序列號緩存 */
+static char _product_sn[16] = {0};
+
 /*---------------------------------------------------------------------------
                              Function Prototypes
  ---------------------------------------------------------------------------*/
@@ -746,9 +749,10 @@ static int _analog_input_current_configs_load_from_string(const char *json_strin
         cJSON *channel = cJSON_GetObjectItemCaseSensitive(it, "channel");
         cJSON *sensor_type = cJSON_GetObjectItemCaseSensitive(it, "sensor_type");
         cJSON *update_address = cJSON_GetObjectItemCaseSensitive(it, "update_address");
+        cJSON *max_range = cJSON_GetObjectItemCaseSensitive(it, "max_range");
         cJSON *name = cJSON_GetObjectItemCaseSensitive(it, "name");
 
-        if (!cJSON_IsNumber(port) || !cJSON_IsNumber(channel) || !cJSON_IsNumber(sensor_type) || 
+        if (!cJSON_IsNumber(port) || !cJSON_IsNumber(channel) || !cJSON_IsNumber(sensor_type) ||
             !cJSON_IsNumber(update_address)) {
             error(tag, "Invalid analog current input config entry (missing numeric fields)");
             continue;
@@ -759,7 +763,16 @@ static int _analog_input_current_configs_load_from_string(const char *json_strin
         c.channel = (uint8_t)channel->valueint;
         c.sensor_type = (uint8_t)sensor_type->valueint;
         c.update_address = (uint16_t)update_address->valueint;
-        
+
+        // 根據感測器類型設定預設量程
+        uint16_t default_range = 0;
+        if (c.sensor_type == 0) {
+            default_range = 100;  // 流量感測器預設 100 LPM
+        } else if (c.sensor_type == 1) {
+            default_range = 10;   // 壓力感測器預設 10 Bar
+        }
+        c.max_range = (max_range && cJSON_IsNumber(max_range)) ? (uint16_t)max_range->valueint : default_range;
+
         // copy name
         if (name != NULL && name->valuestring != NULL) {
             strncpy(c.name, name->valuestring, sizeof(c.name)-1);
@@ -1373,6 +1386,10 @@ control_logic_machine_type_t control_logic_config_get_machine_type(void)
         else if (strncmp(_system_configs->machine_type, "LX1400", sizeof(_system_configs->machine_type)) == 0) {
             machine_type = CONTROL_LOGIC_MACHINE_TYPE_LX1400;
         }
+        /* 檢查是否為 LS300D 機型 */
+        else if (strncmp(_system_configs->machine_type, "LS300D", sizeof(_system_configs->machine_type)) == 0) {
+            machine_type = CONTROL_LOGIC_MACHINE_TYPE_LS300D;
+        }
     }
 
     return machine_type;
@@ -1465,4 +1482,42 @@ int control_logic_register_load_from_json(const char *jsonPayload, control_logic
     cJSON_Delete(registers_array);
 
     return ret;
+}
+
+// ========== v021 新增函式 ==========
+
+const char* control_logic_config_get_model_name(void)
+{
+    // get machine type
+    control_logic_machine_type_t machine_type = control_logic_config_get_machine_type();
+
+    // get machine type name
+    switch (machine_type) {
+        default:
+        case CONTROL_LOGIC_MACHINE_TYPE_LS80:
+            return "LS80";
+        case CONTROL_LOGIC_MACHINE_TYPE_LX1400:
+            return "LX1400";
+        case CONTROL_LOGIC_MACHINE_TYPE_LS300D:
+            return "LS300D";
+    }
+
+    return "LS80";
+}
+
+const char* control_logic_config_get_product_sn(void)
+{
+    // get product sn
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_0, MODBUS_TYPE_UINT16, &_product_sn[0]);
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_1, MODBUS_TYPE_UINT16, &_product_sn[1]);
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_2, MODBUS_TYPE_UINT16, &_product_sn[2]);
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_3, MODBUS_TYPE_UINT16, &_product_sn[3]);
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_4, MODBUS_TYPE_UINT16, &_product_sn[4]);
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_5, MODBUS_TYPE_UINT16, &_product_sn[5]);
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_6, MODBUS_TYPE_UINT16, &_product_sn[6]);
+    control_logic_load_from_modbus_table(MODBUS_ADDRESS_PRODUCT_SN_7, MODBUS_TYPE_UINT16, &_product_sn[7]);
+
+    _product_sn[8] = '\0';
+
+    return _product_sn;
 }

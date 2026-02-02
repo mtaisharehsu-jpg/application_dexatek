@@ -185,42 +185,44 @@ static int _peripheral_AI_voltage_update(uint16_t port)
 }
 
 /**
- * @brief 電流轉換為水流量
+ * @brief 電流轉換為水流量(可配置量程)
  *
  * 功能說明:
- * 將 4-20mA 電流信號轉換為水流量值(0-100 LPM)。
+ * 將 4-20mA 電流信號轉換為水流量值。
  *
- * @param uA    輸入電流值(微安 uA)
- * @param value 輸出流量值指標
+ * @param uA        輸入電流值(微安 uA)
+ * @param max_range 最大流量值(LPM)
+ * @param value     輸出流量值指標
  *
  * @return int 執行結果
  *         - SUCCESS: 轉換成功
  *
  * 轉換公式:
- * - 4-20mA 對應 0-100LPM
- * - flow = (I - 4mA) * 6.25
- * - 輸出值放大10倍供 HMI 顯示
+ * - 4-20mA 對應 0-max_range LPM
+ * - flow = (I - 4mA) / 16mA * max_range
+ * - 輸出值放大10倍供 HMI 顯示(精度 0.1 LPM)
+ *
+ * 範例:
+ * - max_range=100: 4mA=0, 12mA=50.0, 20mA=100.0 LPM
+ * - max_range=200: 4mA=0, 12mA=100.0, 20mA=200.0 LPM
+ * - max_range=300: 4mA=0, 12mA=150.0, 20mA=300.0 LPM
  *
  * 實現邏輯:
  * 1. 減去基準電流 4mA
- * 2. 計算流量值: (I - 4mA) / 1000 * 6.25
+ * 2. 計算流量值: (I - 4mA) / 16mA * max_range
  * 3. 放大10倍供 HMI 顯示
  * 4. 轉換為整數返回
  */
-static int _current_to_water_flow(int32_t uA, int32_t *value)
+static int _current_to_water_flow(int32_t uA, uint16_t max_range, int32_t *value)
 {
-    /* flow = (I - 4mA) * 6.25 */
-    /* 4-20mA -> 0-100LPM */
-
     int ret = SUCCESS;
 
     /* 減去基準電流 4mA */
     int32_t I_mA = uA - 4000;
-
     if (I_mA < 0) I_mA = 0;
 
-    /* 計算流量 */
-    float flow = ((float)I_mA / 1000.0f ) * 6.25f;
+    /* 計算流量: (I - 4mA) / 16mA * max_range */
+    float flow = ((float)I_mA / 16000.0f) * max_range;
 
     /* 放大10倍供 HMI 顯示 */
     flow = flow * 10;
@@ -232,46 +234,49 @@ static int _current_to_water_flow(int32_t uA, int32_t *value)
 }
 
 /**
- * @brief 電流轉換為壓力
+ * @brief 電流轉換為壓力(可配置量程)
  *
  * 功能說明:
- * 將 4-20mA 電流信號轉換為壓力值(0-10 bar)。
+ * 將 4-20mA 電流信號轉換為壓力值。
  *
- * @param uA    輸入電流值(微安 uA)
- * @param value 輸出壓力值指標
+ * @param uA        輸入電流值(微安 uA)
+ * @param max_range 最大壓力值(Bar)
+ * @param value     輸出壓力值指標
  *
  * @return int 執行結果
  *         - SUCCESS: 轉換成功
  *
  * 轉換公式:
- * - 4-20mA 對應 0-10 bar
- * - pressure = (I - 4mA) * 0.625
- * - 輸出值放大100倍供 HMI 顯示
+ * - 4-20mA 對應 0-max_range Bar
+ * - pressure = (I - 4mA) / 16mA * max_range
+ * - 輸出值放大100倍供 HMI 顯示(精度 0.01 Bar)
+ *
+ * 範例:
+ * - max_range=10: 4mA=0, 12mA=5.00, 20mA=10.00 Bar
+ * - max_range=15: 4mA=0, 12mA=7.50, 20mA=15.00 Bar
+ * - max_range=20: 4mA=0, 12mA=10.00, 20mA=20.00 Bar
  *
  * 實現邏輯:
  * 1. 減去基準電流 4mA
- * 2. 計算壓力值: (I - 4mA) / 1000 * 0.625
+ * 2. 計算壓力值: (I - 4mA) / 16mA * max_range
  * 3. 放大100倍供 HMI 顯示
  * 4. 轉換為整數返回
  */
-static int _current_to_pressure(int32_t uA, int32_t *value)
+static int _current_to_pressure(int32_t uA, uint16_t max_range, int32_t *value)
 {
-    /* pressure = (I - 4mA) * 0.625 */
-    /* 4-20mA -> 0-10 bar */
-
     int ret = SUCCESS;
 
     /* 減去基準電流 4mA */
     int32_t I_mA = uA - 4000;
-
     if (I_mA < 0) I_mA = 0;
 
-    /* 計算壓力 */
-    float pressure = ((float)I_mA / 1000.0f) * 0.625;
+    /* 計算壓力: (I - 4mA) / 16mA * max_range */
+    float pressure = ((float)I_mA / 16000.0f) * max_range;
 
     /* 放大100倍供 HMI 顯示 */
     pressure = pressure * 100;
 
+    /* 轉換為整數 */
     *value = (int32_t)lroundf(pressure);
 
     return ret;
@@ -306,16 +311,20 @@ static int _peripheral_AI_current_update(uint16_t port)
                         if (ai_configs != NULL && ai_configs[j].port == port && ai_configs[j].channel == i) {
                             int32_t value = 0;
                             switch (ai_configs[j].sensor_type) {
-                                case 0: // water flow sensor
-                                    _current_to_water_flow(uA[i], &value);
+                                case 0: { // water flow sensor
+                                    uint16_t max_range_flow = (ai_configs[j].max_range > 0) ? ai_configs[j].max_range : 100;
+                                    _current_to_water_flow(uA[i], max_range_flow, &value);
                                     // debug(tag, "port %d, ch %d, flow = %d", port, i, value);
                                     control_logic_update_to_modbus_table(ai_configs[j].update_address, MODBUS_TYPE_UINT16, &value);
                                     break;
-                                case 1: // pressure sensor
-                                    _current_to_pressure(uA[i], &value);
+                                }
+                                case 1: { // pressure sensor
+                                    uint16_t max_range_pressure = (ai_configs[j].max_range > 0) ? ai_configs[j].max_range : 10;
+                                    _current_to_pressure(uA[i], max_range_pressure, &value);
                                     // debug(tag, "port %d, ch %d, pressure = %d", port, i, value);
                                     control_logic_update_to_modbus_table(ai_configs[j].update_address, MODBUS_TYPE_UINT16, &value);
                                     break;
+                                }
                                 default:
                                     error(tag, "Not supported sensor type %d", ai_configs[j].sensor_type);
                                     break;

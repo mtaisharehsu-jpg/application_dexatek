@@ -38,4 +38,4 @@ dlopen=''
 dlpreopen=''
 
 # Directory that this library needs to be installed in:
-libdir='/home/kellen/work/projects/kenmec/augentix-platform-application/buildroot/output/target/usr/lib'
+libdir='/home/stephen/dk-ipc/SDK_Kenmec_CDU/buildroot/output/target/usr/lib'

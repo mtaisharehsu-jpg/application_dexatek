@@ -1,4 +1,4 @@
-#! /bin/sh
+#! /bin/bash
 # Generated automatically by config.status (libmodbus) 3.1.6
 # NOTE: Changes made to this file will be lost: look at ltmain.sh.
 
@@ -65,7 +65,7 @@ fast_install=yes
 shared_archive_member_spec=
 
 # Shell to use when invoking shell scripts.
-SHELL="/bin/sh"
+SHELL="/bin/bash"
 
 # An echo program that protects backslashes.
 ECHO="printf %s\\n"
@@ -99,7 +99,7 @@ EGREP="/usr/bin/grep -E"
 FGREP="/usr/bin/grep -F"
 
 # A BSD- or MS-compatible name lister.
-NM="/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-nm -B"
+NM="/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/arm-linux-gnueabihf-nm -B"
 
 # Whether we need soft or hard links.
 LN_S="ln -s"
@@ -284,10 +284,10 @@ finish_eval=""
 hardcode_into_libs=yes
 
 # Compile-time system search path for libraries.
-sys_lib_search_path_spec="/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/4.9.4 /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/lib/gcc /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/lib /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/libc/lib /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/libc/usr/lib "
+sys_lib_search_path_spec="/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf/4.9.4 /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/lib/gcc/arm-linux-gnueabihf /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/lib/gcc /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/lib /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/libc/lib /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/libc/usr/lib "
 
 # Detected run-time system search path for libraries.
-sys_lib_dlsearch_path_spec="/lib /usr/lib /home/kellen/work/projects/ingenic/T41/ISVP-T41-1.2.4-20240812/software/en/cloner-2.5.36-ubuntu_alpha/lib/64bit/ /home/kellen/work/projects/ingenic/T41/ISVP-T41-1.2.4-20240812/software/en/cloner-2.5.36-ubuntu_alpha/qt/lib/ /usr/lib/x86_64-linux-gnu/libfakeroot /usr/local/lib/i386-linux-gnu /lib/i386-linux-gnu /usr/lib/i386-linux-gnu /usr/local/lib/i686-linux-gnu /lib/i686-linux-gnu /usr/lib/i686-linux-gnu /usr/local/lib /usr/local/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu "
+sys_lib_dlsearch_path_spec="/lib /usr/lib /usr/lib/x86_64-linux-gnu/libfakeroot /usr/local/lib /usr/local/lib/x86_64-linux-gnu /lib/x86_64-linux-gnu /usr/lib/x86_64-linux-gnu /lib32 /usr/lib32 "
 
 # Explicit LT_SYS_LIBRARY_PATH set during ./configure time.
 configure_time_lt_sys_library_path=""
@@ -307,7 +307,7 @@ striplib="arm-linux-gnueabihf-strip --strip-unneeded"
 
 
 # The linker used to build libraries.
-LD="/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/bin/ld"
+LD="/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/bin/ld"
 
 # How to create reloadable object files.
 reload_flag=" -r"
@@ -11767,7 +11767,7 @@ build_old_libs=`case $build_libtool_libs in yes) echo no;; *) echo yes;; esac`
 # ### BEGIN LIBTOOL TAG CONFIG: CXX
 
 # The linker used to build libraries.
-LD="/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/bin/ld"
+LD="/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/arm-linux-gnueabihf/bin/ld"
 
 # How to create reloadable object files.
 reload_flag=" -r"
@@ -11898,17 +11898,17 @@ file_list_spec=""
 hardcode_action=immediate
 
 # The directories searched by this compiler when creating a shared library.
-compiler_lib_search_dirs="/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4 /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/../../../../arm-linux-gnueabihf/lib /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/lib /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib"
+compiler_lib_search_dirs="/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4 /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/../../../../arm-linux-gnueabihf/lib /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/lib /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib"
 
 # Dependencies to place before and after the objects being linked to
 # create a shared library.
-predep_objects="/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib/crti.o /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/crtbeginS.o"
-postdep_objects="/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/crtendS.o /home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib/crtn.o"
+predep_objects="/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib/crti.o /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/crtbeginS.o"
+postdep_objects="/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/crtendS.o /home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib/crtn.o"
 predeps=""
 postdeps="-lstdc++ -lm -lgcc_s -lc -lgcc_s"
 
 # The library search path used internally by the compiler when linking
 # a shared library.
-compiler_lib_search_path="-L/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4 -L/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf -L/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc -L/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/../../../../arm-linux-gnueabihf/lib -L/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/lib -L/home/kellen/work/projects/kenmec/augentix-platform-application/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib"
+compiler_lib_search_path="-L/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4 -L/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf -L/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc -L/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../lib/gcc/arm-linux-gnueabihf/4.9.4/../../../../arm-linux-gnueabihf/lib -L/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/lib -L/home/stephen/dk-ipc/SDK_Kenmec_CDU/toolchain/gcc-linaro-4.9-2016.02-x86_64_arm-linux-gnueabihf/bin/../arm-linux-gnueabihf/libc/usr/lib"
 
 # ### END LIBTOOL TAG CONFIG: CXX

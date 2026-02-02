@@ -44,6 +44,7 @@ INCS += $(LIBGPIO_PATH)
 INCS += $(MBEDTLS_INC)
 INCS += $(SQLITE3_INC)
 INCS += $(OPENSSL_INC)
+INCS += $(ZLOG_INC)
 INCS += $(root)/redfish/include
 
 # specify library directories
@@ -54,9 +55,10 @@ LIBS += $(LIBGPIO_PATH)
 LIBS += $(MBEDTLS_LIB)
 LIBS += $(SQLITE3_LIB)
 LIBS += $(OPENSSL_LIB)
+LIBS += $(ZLOG_LIB)
 
 # LDFLAGS
-LDFLAGS := -ldexatek $(MODBUS_LDFLAGS) $(MDNS_LDFLAGS) $(HID_LDFLAGS) -lgpio -lgcc_s
+LDFLAGS := -ldexatek $(MODBUS_LDFLAGS) $(MDNS_LDFLAGS) $(HID_LDFLAGS) -lgpio -lgcc_s -lzlog
 
 # specify source files
 SRCS :=
@@ -64,6 +66,7 @@ SRCS += $(wildcard $(root)/*.c)
 SRCS += $(wildcard $(root)/control_logic/*.c)
 SRCS += $(wildcard $(root)/control_logic/ls80/*.c)
 SRCS += $(wildcard $(root)/control_logic/lx1400/*.c)
+SRCS += $(wildcard $(root)/control_logic/ls300d/*.c)
 SRCS += $(wildcard $(root)/redfish/src/*.c)
 SRCS += $(wildcard $(root)/misc/*.c)
 
@@ -110,7 +113,8 @@ uninstall:
 .PHONY: clean
 clean:
 	$(Q)rm -f $(root)/$(BIN)
-	$(Q)find $(root) -name "*.[ado]" -exec rm -f {} \;
+	$(Q)rm -f $(filter $(root)/%,$(OBJS))
+	$(Q)rm -f $(filter $(root)/%,$(DEPS))
 
 # general directory independent targets
 %.o: %.c

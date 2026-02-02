@@ -2,6 +2,7 @@
 #define REDFISH_SERVER_H
 
 #include "../include/config.h"
+#include "../../kenmec_config.h"
 
 // Redfish resource types
 typedef enum {
@@ -31,6 +32,7 @@ typedef enum {
     REDFISH_RESOURCE_ACCOUNTSERVICE,
     REDFISH_RESOURCE_ACCOUNTSERVICE_ROLES_COLLECTION,
     REDFISH_RESOURCE_ACCOUNTSERVICE_ROLE,
+    REDFISH_RESOURCE_ACCOUNTSERVICE_PRIVILEGEMAP,
 	REDFISH_RESOURCE_CERTIFICATESERVICE,
 	REDFISH_RESOURCE_CERTIFICATESERVICE_GENERATE_CSR,
 	REDFISH_RESOURCE_CERTIFICATESERVICE_REPLACE_CERTIFICATE,
@@ -52,6 +54,7 @@ typedef enum {
     REDFISH_RESOURCE_CDU_OEM_CONTROL_LOGICS_MEMBER,
     REDFISH_RESOURCE_CDU_OEM_CONTROL_LOGICS_ACTION_READ,
     REDFISH_RESOURCE_CDU_OEM_CONTROL_LOGICS_ACTION_WRITE,
+    REDFISH_RESOURCE_CDU_OEM_IOBOARD_OTA,
     REDFISH_RESOURCE_UNKNOWN
 } redfish_resource_type_t;
 
@@ -59,6 +62,7 @@ typedef enum {
 typedef enum {
     LABEL_POST_ACTION_NONE = 0,
     LABEL_POST_ACTION_FORCE_RESTART,
+    LABEL_POST_ACTION_FIRMWARE_UPDATE,
     // Add more post actions here as needed
     // LABEL_POST_ACTION_SHUTDOWN,
     // LABEL_POST_ACTION_REBOOT,
@@ -87,6 +91,10 @@ typedef struct {
     char headers[MAX_HEADERS][2][MAX_HEADER_VALUE_LEN];
     int header_count;
     label_post_action_t post_action;
+    int use_chunked_encoding;
+    FILE *chunked_file;
+    long chunked_file_size;
+    long chunked_file_offset;
 } http_response_t;
 
 // Function declarations
@@ -95,9 +103,11 @@ void redfish_server_cleanup(void);
 int parse_http_request(const char *raw_request, http_request_t *request, int is_https);
 int process_redfish_request(const http_request_t *request, http_response_t *response);
 void generate_http_response(const http_response_t *response, char *output, size_t output_size);
+int generate_chunked_data(http_response_t *response, char *output, size_t output_size, int chunk_size);
 
 // HTTP/HTTPS server functions
 int handle_http_client_connection(int client_fd);
+int handle_http_client_connection_direct(int client_fd);
 int handle_https_client_connection(int client_fd);
 int http_server_init(int port);
 int http_server_get_fd(void);
@@ -128,6 +138,7 @@ int handle_session_delete(const char *token, http_response_t *response);
 int handle_sessions_collection(const http_request_t *request, http_response_t *response);
 int handle_session_member(const char *session_id, http_response_t *response);
 int handle_accounts(void);
+int handle_account_service_privilege_map(http_response_t *response);
 
 // PUT handlers (update existing resources)
 int handle_chassis_update(const char *chassis_id, const http_request_t *request, http_response_t *response);
@@ -140,6 +151,7 @@ int handle_chassis_delete(const char *chassis_id, http_response_t *response);
 int handle_system_delete(const char *system_id, http_response_t *response);
 int handle_manager_delete(const char *manager_id, http_response_t *response);
 int handle_thermalequipment_delete(const char *thermalequipment_id, http_response_t *response);
+int handle_account_delete(const char *account_id_str, http_response_t *response);
 
 // Utility functions
 redfish_resource_type_t parse_redfish_path(const char *path, char **resource_id);

@@ -38,14 +38,22 @@ static const char* tag = "kenmec_main";
 #define AIO_1_MODE_STR "AIO_1_mode"
 #define AIO_2_MODE_STR "AIO_2_mode"
 #define AIO_3_MODE_STR "AIO_3_mode"
-#define AIO_0_VOLTAGE_STR "AIO_0_voltage"
-#define AIO_1_VOLTAGE_STR "AIO_1_voltage"
-#define AIO_2_VOLTAGE_STR "AIO_2_voltage"
-#define AIO_3_VOLTAGE_STR "AIO_3_voltage"
-#define AIO_0_CURRENT_STR "AIO_0_current"
-#define AIO_1_CURRENT_STR "AIO_1_current"
-#define AIO_2_CURRENT_STR "AIO_2_current"
-#define AIO_3_CURRENT_STR "AIO_3_current"
+#define AI_0_VOLTAGE_STR "AI_0_voltage"
+#define AI_1_VOLTAGE_STR "AI_1_voltage"
+#define AI_2_VOLTAGE_STR "AI_2_voltage"
+#define AI_3_VOLTAGE_STR "AI_3_voltage"
+#define AI_0_CURRENT_STR "AI_0_current"
+#define AI_1_CURRENT_STR "AI_1_current"
+#define AI_2_CURRENT_STR "AI_2_current"
+#define AI_3_CURRENT_STR "AI_3_current"
+#define AO_0_VOLTAGE_STR "AO_0_voltage"
+#define AO_1_VOLTAGE_STR "AO_1_voltage"
+#define AO_2_VOLTAGE_STR "AO_2_voltage"
+#define AO_3_VOLTAGE_STR "AO_3_voltage"
+#define AO_0_CURRENT_STR "AO_0_current"
+#define AO_1_CURRENT_STR "AO_1_current"
+#define AO_2_CURRENT_STR "AO_2_current"
+#define AO_3_CURRENT_STR "AO_3_current"
 #define PWM_FREQUENCY_STR "PWM_frequency"
 #define PWM_0_FREQ_STR "PWM_0_frequency"
 #define PWM_1_FREQ_STR "PWM_1_frequency"
@@ -94,14 +102,14 @@ typedef enum  {
     REDFISH_WRITE_AIO_1_MODE,
     REDFISH_WRITE_AIO_2_MODE,
     REDFISH_WRITE_AIO_3_MODE,
-    REDFISH_WRITE_AIO_0_VOLTAGE,
-    REDFISH_WRITE_AIO_1_VOLTAGE,
-    REDFISH_WRITE_AIO_2_VOLTAGE,
-    REDFISH_WRITE_AIO_3_VOLTAGE,
-    REDFISH_WRITE_AIO_0_CURRENT,
-    REDFISH_WRITE_AIO_1_CURRENT,
-    REDFISH_WRITE_AIO_2_CURRENT,
-    REDFISH_WRITE_AIO_3_CURRENT,
+    REDFISH_WRITE_AO_0_VOLTAGE,
+    REDFISH_WRITE_AO_1_VOLTAGE,
+    REDFISH_WRITE_AO_2_VOLTAGE,
+    REDFISH_WRITE_AO_3_VOLTAGE,
+    REDFISH_WRITE_AO_0_CURRENT,
+    REDFISH_WRITE_AO_1_CURRENT,
+    REDFISH_WRITE_AO_2_CURRENT,
+    REDFISH_WRITE_AO_3_CURRENT,
     REDFISH_WRITE_PWM_FREQUENCY,
     REDFISH_WRITE_PWM_0_DUTY,
     REDFISH_WRITE_PWM_1_DUTY,
@@ -278,44 +286,44 @@ static int _get_io_board_write_supported_attribute(cJSON* p_object)
             return REDFISH_WRITE_AIO_3_MODE;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_0_VOLTAGE_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_0_VOLTAGE_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_0_VOLTAGE;
+            return REDFISH_WRITE_AO_0_VOLTAGE;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_1_VOLTAGE_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_1_VOLTAGE_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_1_VOLTAGE;
+            return REDFISH_WRITE_AO_1_VOLTAGE;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_2_VOLTAGE_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_2_VOLTAGE_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_2_VOLTAGE;
+            return REDFISH_WRITE_AO_2_VOLTAGE;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_3_VOLTAGE_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_3_VOLTAGE_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_3_VOLTAGE;
+            return REDFISH_WRITE_AO_3_VOLTAGE;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_0_CURRENT_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_0_CURRENT_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_0_CURRENT;
+            return REDFISH_WRITE_AO_0_CURRENT;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_1_CURRENT_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_1_CURRENT_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_1_CURRENT;
+            return REDFISH_WRITE_AO_1_CURRENT;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_2_CURRENT_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_2_CURRENT_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_2_CURRENT;
+            return REDFISH_WRITE_AO_2_CURRENT;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
-    } else if (strcmp(AIO_3_CURRENT_STR, p_object->string) == 0) {
+    } else if (strcmp(AO_3_CURRENT_STR, p_object->string) == 0) {
         if (p_object->type == cJSON_Number) {
-            return REDFISH_WRITE_AIO_3_CURRENT;
+            return REDFISH_WRITE_AO_3_CURRENT;
         }
         return REDFISH_WRITE_NOT_SUPPORTED;
     }
@@ -457,35 +465,35 @@ int redfish_board_write(uint16_t port_idx, const char *jsonPayload, uint16_t tim
                         ret = control_hardware_AI_AO_mode_set(port_idx_real, 3, attribute_value, timeout_ms);
                         break;
 
-                    case REDFISH_WRITE_AIO_0_VOLTAGE:
+                    case REDFISH_WRITE_AO_0_VOLTAGE:
                         ret = control_hardware_analog_output_voltage_set(port_idx_real, 0, attribute_value, timeout_ms);
                         break;
 
-                    case REDFISH_WRITE_AIO_1_VOLTAGE:
+                    case REDFISH_WRITE_AO_1_VOLTAGE:
                         ret = control_hardware_analog_output_voltage_set(port_idx_real, 1, attribute_value, timeout_ms);
                         break;
 
-                    case REDFISH_WRITE_AIO_2_VOLTAGE:
+                    case REDFISH_WRITE_AO_2_VOLTAGE:
                         ret = control_hardware_analog_output_voltage_set(port_idx_real, 2, attribute_value, timeout_ms);
                         break;
 
-                    case REDFISH_WRITE_AIO_3_VOLTAGE:
+                    case REDFISH_WRITE_AO_3_VOLTAGE:
                         ret = control_hardware_analog_output_voltage_set(port_idx_real, 3, attribute_value, timeout_ms);
                         break;
 
-                    case REDFISH_WRITE_AIO_0_CURRENT:
+                    case REDFISH_WRITE_AO_0_CURRENT:
                         ret = control_hardware_analog_output_current_set(port_idx_real, 0, attribute_value, timeout_ms);
                         break;
 
-                    case REDFISH_WRITE_AIO_1_CURRENT:
+                    case REDFISH_WRITE_AO_1_CURRENT:
                         ret = control_hardware_analog_output_current_set(port_idx_real, 1, attribute_value, timeout_ms);
                         break;
 
-                    case REDFISH_WRITE_AIO_2_CURRENT:
+                    case REDFISH_WRITE_AO_2_CURRENT:
                         ret = control_hardware_analog_output_current_set(port_idx_real, 2, attribute_value, timeout_ms);
                         break;
                         
-                    case REDFISH_WRITE_AIO_3_CURRENT:
+                    case REDFISH_WRITE_AO_3_CURRENT:
                         ret = control_hardware_analog_output_current_set(port_idx_real, 3, attribute_value, timeout_ms);
                         break;
                 }
@@ -564,7 +572,7 @@ int redfish_board_data_append_to_json(uint16_t port_idx, cJSON *json_root)
     
     uint16_t port_idx_real = port_idx - 1;
 
-    debug(tag, "[port %d] port_idx_real = %d", port_idx, port_idx_real);
+    // debug(tag, "[port %d] port_idx_real = %d", port_idx, port_idx_real);
 
     uint16_t port_pid = 0;
     hid_manager_port_pid_get(port_idx_real, &port_pid);
@@ -573,11 +581,16 @@ int redfish_board_data_append_to_json(uint16_t port_idx, cJSON *json_root)
     uint16_t val[8] = {0};
     uint32_t val32[8] = {0};
     int32_t s_val32[8] = {0};
+    char version_str[16] = {0};
 
     switch (port_pid) {
         case HID_IO_BOARD_PID:
             cJSON_AddNumberToObject(json_root, "Port", port_idx);
             cJSON_AddNumberToObject(json_root, "PID", port_pid);
+            // version
+            control_hardware_version_get(port_pid, port_idx_real, val, 1000);
+            snprintf(version_str, sizeof(version_str), "%d.%d.%d", val[0], val[1], val[2]);
+            cJSON_AddStringToObject(json_root, "Version", version_str);
             // DO
             control_hardware_digital_output_all_get_from_ram(port_idx_real, val);
             cJSON_AddNumberToObject(json_root, DO_0_STR, val[0]);
@@ -606,27 +619,49 @@ int redfish_board_data_append_to_json(uint16_t port_idx, cJSON *json_root)
             cJSON_AddNumberToObject(json_root, AIO_3_MODE_STR, val[3]);
             // AI voltage
             control_hardware_analog_input_voltage_get_from_ram(port_idx_real, 0, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_0_VOLTAGE_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_0_VOLTAGE_STR, temp_val);
             control_hardware_analog_input_voltage_get_from_ram(port_idx_real, 1, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_1_VOLTAGE_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_1_VOLTAGE_STR, temp_val);
             control_hardware_analog_input_voltage_get_from_ram(port_idx_real, 2, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_2_VOLTAGE_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_2_VOLTAGE_STR, temp_val);
             control_hardware_analog_input_voltage_get_from_ram(port_idx_real, 3, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_3_VOLTAGE_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_3_VOLTAGE_STR, temp_val);
             // AI current
             control_hardware_analog_input_current_get_from_ram(port_idx_real, 0, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_0_CURRENT_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_0_CURRENT_STR, temp_val);
             control_hardware_analog_input_current_get_from_ram(port_idx_real, 1, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_1_CURRENT_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_1_CURRENT_STR, temp_val);
             control_hardware_analog_input_current_get_from_ram(port_idx_real, 2, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_2_CURRENT_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_2_CURRENT_STR, temp_val);
             control_hardware_analog_input_current_get_from_ram(port_idx_real, 3, &temp_val);
-            cJSON_AddNumberToObject(json_root, AIO_3_CURRENT_STR, temp_val);
+            cJSON_AddNumberToObject(json_root, AI_3_CURRENT_STR, temp_val);
+            // AO voltage
+            control_hardware_analog_output_voltage_get_from_ram(port_idx_real, 0, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_0_VOLTAGE_STR, temp_val);
+            control_hardware_analog_output_voltage_get_from_ram(port_idx_real, 1, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_1_VOLTAGE_STR, temp_val);
+            control_hardware_analog_output_voltage_get_from_ram(port_idx_real, 2, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_2_VOLTAGE_STR, temp_val);
+            control_hardware_analog_output_voltage_get_from_ram(port_idx_real, 3, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_3_VOLTAGE_STR, temp_val);
+            // AO current
+            control_hardware_analog_output_current_get_from_ram(port_idx_real, 0, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_0_CURRENT_STR, temp_val);
+            control_hardware_analog_output_current_get_from_ram(port_idx_real, 1, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_1_CURRENT_STR, temp_val);
+            control_hardware_analog_output_current_get_from_ram(port_idx_real, 2, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_2_CURRENT_STR, temp_val);
+            control_hardware_analog_output_current_get_from_ram(port_idx_real, 3, &temp_val);
+            cJSON_AddNumberToObject(json_root, AO_3_CURRENT_STR, temp_val);
             break;
 
         case HID_RTD_BOARD_PID:
             cJSON_AddNumberToObject(json_root, "Port", port_idx);
             cJSON_AddNumberToObject(json_root, "PID", port_pid);
+            // version
+            control_hardware_version_get(port_pid, port_idx_real, val, 1000);
+            snprintf(version_str, sizeof(version_str), "%d.%d.%d", val[0], val[1], val[2]);
+            cJSON_AddStringToObject(json_root, "Version", version_str);            
             // // PWM duty
             // control_hardware_pwm_duty_all_get_from_ram(port_idx_real, val);
             // cJSON_AddNumberToObject(json_root, PWM_0_DUTY_STR, val[0]);
@@ -675,14 +710,12 @@ int redfish_board_data_append_to_json(uint16_t port_idx, cJSON *json_root)
 
 int redfish_control_logic_data_append_to_json(uint16_t control_logic_idx, cJSON *json_root)
 {
-    int ret = SUCCESS;
 
     return control_logic_api_data_append_to_json(control_logic_idx, json_root);
 }
 
 int redfish_control_logic_write(uint16_t control_logic_idx, const char *jsonPayload, uint16_t timeout_ms)
 {
-    int ret = SUCCESS;
 
     (void)timeout_ms;
 
